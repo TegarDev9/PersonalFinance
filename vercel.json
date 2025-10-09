@@ -5,11 +5,7 @@
   ],
   "functions": {
     "api/index.js": {
-      "includeFiles": [
-        "public/**",
-        "data/**",
-        "docs/**"
-      ],
+      "includeFiles": "{public/**,data/**,docs/**}",
       "runtime": "nodejs20.x"
     }
   },
