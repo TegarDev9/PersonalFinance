@@ -44,6 +44,14 @@ async function kvSet(key, val) {
 async function kvListPush(key, val) {
   await kvCmd(['RPUSH', key, val]);
 }
+async function kvListLen(key) {
+  const r = await kvCmd(['LLEN', key]);
+  return (r && typeof r.result === 'number') ? r.result : 0;
+}
+async function kvListRange(key, start, stop) {
+  const r = await kvCmd(['LRANGE', key, start, stop]);
+  return (r && Array.isArray(r.result)) ? r.result : [];
+}
 
 // Deno KV (for Deno Deploy/local Deno)
 const denoKvAvailable = () => typeof globalThis !== 'undefined' && typeof globalThis.Deno !== 'undefined' && typeof globalThis.Deno.openKv === 'function';
@@ -899,6 +907,63 @@ app.post('/n8n/forward', async (req, res) => {
   }
 });
 
+// Read n8n hook logs with paging (limit/offset)
+app.get('/webhooks/n8n/logs', async (req, res) => {
+  try {
+    const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 50));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+
+    // KV list (Upstash/Vercel)
+    if (kvEnabled()) {
+      const total = await kvListLen(HOOKS_LIST_KEY);
+      if (total === 0) return res.json({ total: 0, items: [] });
+      // Compute range to get latest first
+      const lastIdx = total - 1 - offset;
+      const firstIdx = Math.max(0, lastIdx - (limit - 1));
+      if (firstIdx > lastIdx) return res.json({ total, items: [] });
+      const arr = await kvListRange(HOOKS_LIST_KEY, firstIdx, lastIdx);
+      const items = arr.reverse().map(line => {
+        try { return JSON.parse(line); } catch { return { raw: line }; }
+      });
+      return res.json({ total, items });
+    }
+
+    // Deno KV: list keys under ['fin','hooks']
+    if (denoKvAvailable()) {
+      const kv = await getDenoKv();
+      const all = [];
+      for await (const entry of kv.list({ prefix: ['fin', 'hooks'] })) {
+        all.push(entry);
+      }
+      const total = all.length;
+      const withTs = all.map(e => {
+        const k = e.key?.[2] || '';
+        const ts = parseInt(String(k).split('_')[0], 10);
+        let val = e.value;
+        if (typeof val === 'string') {
+          try { val = JSON.parse(val); } catch {}
+        }
+        return { ts: Number.isFinite(ts) ? ts : 0, val };
+      }).sort((a, b) => b.ts - a.ts); // latest first
+      const items = withTs.slice(offset, offset + limit).map(x => x.val);
+      return res.json({ total, items });
+    }
+
+    // File-based: data/hooks.log
+    await ensureDataFile();
+    const logPath = path.join(DATA_DIR, 'hooks.log');
+    if (!fs.existsSync(logPath)) return res.json({ total: 0, items: [] });
+    const raw = await fsp.readFile(logPath, 'utf-8');
+    const lines = raw.split(/\r?\n/).filter(Boolean);
+    const total = lines.length;
+    const slice = lines.slice().reverse().slice(offset, offset + limit);
+    const items = slice.map(l => { try { return JSON.parse(l); } catch { return { raw: l }; } });
+    return res.json({ total, items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Export helpers and endpoints
 function filterTransactions(db, query) {
   const { month, startMonth, endMonth, startDate, endDate, accountId, category, type, minAmount, maxAmount } = query;
@@ -1102,7 +1167,42 @@ app.get('/api/export/bulk.zip', async (req, res) => {
     return String(name).replace(/[^a-z0-9._-]+/gi, '_').slice(0, 64);
   }
 
-  if (mode === 'category') {
+  if (mode === 'account') {
+    const groups = {};
+    for (const t of txs) {
+      const acc = db.accounts.find(a => a.id === t.accountId);
+      const key = acc ? acc.name : t.accountId || 'Account';
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    for (const [accName, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = `${sanitize(accName)}.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else if (mode === 'account_day') {
+    const groups = {};
+    for (const t of txs) {
+      const acc = db.accounts.find(a => a.id === t.accountId);
+      const accName = acc ? acc.name : t.accountId || 'Account';
+      const d = String(t.date).slice(0, 10);
+      const key = `${accName}__${d}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    for (const [key, arr] of Object.entries(groups)) {
+      const [accName, d] = key.split('__');
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = `${sanitize(accName)}-${sanitize(d)}.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else if (mode === 'category') {
     const groups = {};
     for (const t of txs) {
       const cat = t.category || (t.categoryId || 'Uncategorized');
