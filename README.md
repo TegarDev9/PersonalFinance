@@ -14,6 +14,21 @@ A modern dashboard with:
 
 This is a single Node.js app serving an SPA UI with Tailwind, Chart.js and TradingView.
 
+## What's new in this update
+
+- Rules UI builder:
+  - Account selector as a multi-select (choose multiple local accounts to scope a rule)
+  - Live regex tester (pattern + flags + test text) to validate your regex instantly
+- OFX import account mapping:
+  - Map OFX ACCTID to your local accounts, stored in server settings
+  - UI lists detected OFX accounts on upload; map once and reuse
+- Export enhancements:
+  - Preview export: filter and preview transactions in-table before downloading
+  - Bulk export as ZIP: group by month or by category and export CSV/QIF/OFX multiple files in one ZIP
+- Deployability:
+  - Vercel: included /api serverless wrapper and vercel.json rewrite
+  - Deno: deno.jsonc task to run with Node-compat locally (note: Deploy’s filesystem is ephemeral)
+
 ## Quick start
 
 1) Install dependencies
@@ -55,7 +70,9 @@ Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Se
     - Summary totals: total budget, total spent, remaining, % used
     - Overspending list
   - Categories panel: add, inline edit and delete category
-  - Rules panel: define custom keyword rules to auto-categorize
+  - Rules panel:
+    - Add rules with keywords, amount range, accounts (multi-select), regex + flags, priority
+    - Live regex test box shows Match/No match
 
 - Trading
   - TradingView chart widget
@@ -77,6 +94,17 @@ Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Se
   - Provider dropdown: OpenAI, Anthropic, Gemini, Deepseek, Qwen
   - Model box optional — leave blank to use defaults
 
+- Import
+  - CSV/OFX/QIF import
+  - Auto-categorize toggle
+  - Column mapping for date, type, amount, etc.
+  - OFX account mapping UI (map ACCTID ➜ local account)
+
+- Export
+  - Single-file export: CSV/QIF/OFX with filters
+  - Preview table with Account/Month/Category filters
+  - Bulk ZIP export grouped by Month or by Category (CSV/QIF/OFX)
+
 ## REST Endpoints
 
 Wallet
@@ -85,7 +113,7 @@ Wallet
 - POST /api/wallet/accounts { name, type, balance }
 - PATCH /api/wallet/accounts/:id
 - DELETE /api/wallet/accounts/:id
-- GET /api/wallet/transactions?accountId=&limit=
+- GET /api/wallet/transactions?accountId=&month=&startMonth=&endMonth=&category=&limit=
 - POST /api/wallet/transactions { date, accountId, type, category, amount, note }
 - GET /api/wallet/holdings
 - POST /api/wallet/holdings { symbol, quantity, avgPrice }
@@ -128,11 +156,15 @@ Import
 - POST /api/import/transactions
   - body: { records: Array<Object>, mapping?: { date, account, accountId?, type, amount, category, note, description }, autoCategorize?: boolean }
   - Supports CSV/OFX/QIF (CSV parsed in browser, OFX/QIF parsed in browser to records, then posted here). OFX multi-statement is supported (account detected from each STMTRS).
+- Settings (OFX mapping):
+  - GET /api/settings/ofx-map -> { map, accounts }
+  - POST /api/settings/ofx-map { map: { [ofxAcctId]: accountId } }
 
 Export
-- GET /api/export/transactions.csv?month=YYYY-MM&accountId=ACC_ID
-- GET /api/export/transactions.qif?month=YYYY-MM&accountId=ACC_ID
-- GET /api/export/transactions.ofx?month=YYYY-MM&accountId=ACC_ID   # multi-account: multiple STMTRS blocks
+- GET /api/export/transactions.csv?month=YYYY-MM&accountId=ACC_ID&category=...
+- GET /api/export/transactions.qif?month=YYYY-MM&accountId=ACC_ID&category=...
+- GET /api/export/transactions.ofx?month=YYYY-MM&accountId=ACC_ID&category=...
+- GET /api/export/bulk.zip?mode=month|category&format=csv|qif|ofx&accountId=&month=&startMonth=&endMonth=&category=
 
 Sentiment
 - POST /api/sentiment/analyze
@@ -150,6 +182,20 @@ n8n
 - POST /webhooks/n8n (receive)  -> appends JSON lines to data/hooks.log
 - POST /n8n/forward { url?, data } -> forwards JSON to an n8n webhook (uses N8N_WEBHOOK_URL if url omitted)
 - Automatic overspending alert: when a new expense pushes a category above its monthly budget, the server sends a JSON payload to N8N_WEBHOOK_URL (if set)
+
+## Deploy
+
+- Vercel
+  - Files added: api/index.js (serverless handler), vercel.json (rewrite all traffic to /api/index.js)
+  - Steps:
+    1. vercel login
+    2. vercel deploy
+  - Note: Vercel filesystem is ephemeral; file-based DB (data/db.json) won't persist across invocations. For persistence, use a managed KV (e.g., Vercel KV/Upstash) and adapt readDB/writeDB accordingly.
+
+- Deno
+  - Local run with Node-compat: deno task start
+    - deno.jsonc contains: { \"tasks\": { \"start\": \"deno run --compat -A index.js\" } }
+  - Deno Deploy has an ephemeral filesystem; to persist data, use Deno KV or another external store and adapt readDB/writeDB.
 
 ## Notes
 

@@ -189,6 +189,23 @@
                   </select>
                   <input name="priority" type="number" step="1" placeholder="Priority (default 0)" class="border rounded-lg px-3 py-2" />
                 </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <input name="amountMin" type="number" step="0.01" placeholder="Amount min (optional)" class="border rounded-lg px-3 py-2" />
+                  <input name="amountMax" type="number" step="0.01" placeholder="Amount max (optional)" class="border rounded-lg px-3 py-2" />
+                </div>
+                <div>
+                  <label class="text-xs text-slate-600">Accounts (multi-select)</label>
+                  <select id="ruleAccounts" multiple class="w-full border rounded-lg px-3 py-2 h-24"></select>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                  <input name="regex" id="ruleRegex" placeholder="Regex pattern (optional)" class="border rounded-lg px-3 py-2" />
+                  <input name="regexFlags" id="ruleRegexFlags" placeholder="Flags e.g. i (optional)" class="border rounded-lg px-3 py-2" />
+                </div>
+                <div class="space-y-1">
+                  <label class="text-xs text-slate-600">Regex test text</label>
+                  <textarea id="regexTestText" class="w-full border rounded-lg px-3 py-2 h-16" placeholder="Type text to test your regex..."></textarea>
+                  <div id="regexTestResult" class="text-xs"></div>
+                </div>
                 <button class="w-full bg-slate-800 text-white rounded-lg px-3 py-2">Add Rule</button>
               </form>
               <div class="md:col-span-2">
@@ -204,10 +221,10 @@
           </div>
 
           <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
-            <div class="font-semibold text-slate-800 mb-3">Import CSV (Transactions)</div>
+            <div class="font-semibold text-slate-800 mb-3">Import CSV/OFX/QIF (Transactions)</div>
             <div class="grid md:grid-cols-3 gap-4">
               <div class="space-y-2">
-                <input type="file" id="csvFile" accept=".csv,text/csv" class="w-full border rounded-lg px-3 py-2" />
+                <input type="file" id="csvFile" accept=".csv,text/csv,.ofx,application/x-ofx,.qif,application/x-qif" class="w-full border rounded-lg px-3 py-2" />
                 <label class="inline-flex items-center gap-2 text-sm text-slate-600">
                   <input type="checkbox" id="csvAutoCategorize" checked />
                   Auto-categorize
@@ -240,6 +257,15 @@
             <div class="text-xs text-slate-500 mt-2">
               Tip: If mapping is empty, we try to auto-detect common column names like date, amount, description, category, account, type.
             </div>
+
+            <div class="mt-4">
+              <div class="font-medium text-slate-700 mb-2">OFX Account Mapping</div>
+              <div id="ofxMapContainer" class="space-y-2"></div>
+              <div class="mt-2">
+                <button id="saveOfxMapBtn" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Save Mapping</button>
+              </div>
+              <div class="text-xs text-slate-500 mt-1">Map OFX ACCTID to your local accounts so imports route to the correct account.</div>
+            </div>
           </div>
 
           <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm mt-6">
@@ -248,8 +274,10 @@
               <div class="space-y-2">
                 <label class="text-xs text-slate-600">Account</label>
                 <select id="expAccount" class="w-full border rounded-lg px-3 py-2"></select>
-                <label class="text-xs text-slate-600">Month (optional)</label>
+                <label class="text-xs text-slate-600">Month</label>
                 <input id="expMonth" type="month" class="w-full border rounded-lg px-3 py-2" />
+                <label class="text-xs text-slate-600">Category (optional)</label>
+                <select id="expCategory" class="w-full border rounded-lg px-3 py-2"></select>
               </div>
               <div class="space-y-2 md:col-span-2">
                 <div class="grid grid-cols-3 gap-2">
@@ -257,8 +285,38 @@
                   <button id="expQifBtn" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Export QIF</button>
                   <button id="expOfxBtn" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Export OFX</button>
                 </div>
+                <div class="grid grid-cols-2 gap-2 mt-2">
+                  <div class="space-y-1 p-2 border rounded-lg">
+                    <div class="text-xs text-slate-600">Bulk export (ZIP)</div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <select id="expFormat" class="border rounded px-2 py-1 text-sm">
+                        <option value="csv">CSV</option>
+                        <option value="qif">QIF</option>
+                        <option value="ofx">OFX</option>
+                      </select>
+                      <select id="expMode" class="border rounded px-2 py-1 text-sm">
+                        <option value="month">Group by Month</option>
+                        <option value="category">Group by Category</option>
+                      </select>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-1">
+                      <input id="expStartMonth" type="month" class="border rounded px-2 py-1 text-sm" />
+                      <input id="expEndMonth" type="month" class="border rounded px-2 py-1 text-sm" />
+                    </div>
+                    <button id="expZipBtn" class="mt-2 bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Export ZIP</button>
+                  </div>
+                  <div class="space-y-1 p-2 border rounded-lg">
+                    <div class="text-xs text-slate-600">Preview</div>
+                    <div class="flex gap-2">
+                      <button id="expPreviewBtn" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Preview</button>
+                    </div>
+                  </div>
+                </div>
                 <div class="text-xs text-slate-500">Filters apply to all export formats.</div>
               </div>
+            </div>
+            <div class="mt-4 overflow-auto">
+              <table class="min-w-full text-xs" id="expPreviewTable"></table>
             </div>
           </div>
 

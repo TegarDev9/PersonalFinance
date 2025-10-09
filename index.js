@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const vader = require('vader-sentiment');
+const JSZip = require('jszip');
 require('dotenv').config();
 
 const app = express();
@@ -261,10 +262,24 @@ app.delete('/api/wallet/accounts/:id', async (req, res) => {
 
 // Transactions
 app.get('/api/wallet/transactions', async (req, res) => {
-  const { accountId, limit = 100 } = req.query;
+  const { accountId, month, startMonth, endMonth, category, limit = 100 } = req.query;
   const db = await readDB();
   let tx = db.transactions.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   if (accountId) tx = tx.filter(t => t.accountId === accountId);
+  if (category) {
+    const catLower = String(category).toLowerCase();
+    tx = tx.filter(t => (t.category || '').toLowerCase() === catLower || t.categoryId === category);
+  }
+  if (month) {
+    tx = tx.filter(t => monthKey(t.date) === month);
+  } else if (startMonth || endMonth) {
+    const start = startMonth || '0000-00';
+    const end = endMonth || '9999-99';
+    tx = tx.filter(t => {
+      const m = monthKey(t.date);
+      return m >= start && m <= end;
+    });
+  }
   res.json(tx.slice(0, Number(limit)));
 });
 
@@ -640,17 +655,15 @@ app.post('/api/import/transactions', async (req, res) => {
       else if (type.startsWith('tran')) type = 'transfer';
 
       // Account
+      const ofxAcctId = pick(row, ['ofxAcctId', 'OFXACCTID']);
       let accId = accountId;
+      if (!accId && ofxAcctId && db.settings && db.settings.ofxMap && db.settings.ofxMap[ofxAcctId]) {
+        accId = db.settings.ofxMap[ofxAcctId];
+      }
       if (!accId) {
         let acc = db.accounts.find(a => a.name.toLowerCase() === String(accountName || 'Cash').toLowerCase());
         if (!acc) {
-          acc = { id: genId('acc'), name: accountName || 'Imported', type: 'cash', balance: 0 };
-          db.accounts.push(acc);
-          createdAccounts++;
-        }
-        accId = acc.id;
-      }
-
+          acc = { id: genId('acc'), name: accountName || (ofxAcctId ? `OFX ${ofx
       // Category
       let categoryName = categoryRaw || '';
       let categoryId = undefined;
@@ -875,15 +888,52 @@ app.post('/n8n/forward', async (req, res) => {
 });
 
 /**
+ * Settings: OFX account mapping
+ */
+app.get('/api/settings/ofx-map', async (req, res) => {
+  const db = await readDB();
+  const map = (db.settings && db.settings.ofxMap) || {};
+  res.json({ map, accounts: db.accounts });
+});
+
+app.post('/api/settings/ofx-map', async (req, res) => {
+  const { map } = req.body || {};
+  if (!map || typeof map !== 'object') return res.status(400).json({ error: 'map object required' });
+  const db = await readDB();
+  if (!db.settings) db.settings = {};
+  if (!db.settings.ofxMap) db.settings.ofxMap = {};
+  // Only keep mappings to valid accountIds
+  for (const [k, v] of Object.entries(map)) {
+    const acc = db.accounts.find(a => a.id === v);
+    if (acc) db.settings.ofxMap[k] = v;
+  }
+  await writeDB(db);
+  res.json({ ok: true, map: db.settings.ofxMap });
+});
+
+/**
  * Export transactions: CSV, QIF, OFX
  */
 function filterTransactions(db, query) {
-  const month = query.month;
-  const accountId = query.accountId;
+  const { month, startMonth, endMonth, accountId, category } = query;
   let arr = db.transactions.slice().sort((a, b) => (a.date > b.date ? 1 : -1));
-  if (month) arr = arr.filter(t => monthKey(t.date) === month);
   if (accountId) arr = arr.filter(t => t.accountId === accountId);
-  return arr;
+  if (category) {
+    const catLower = String(category).toLowerCase();
+    arr = arr.filter(t => (t.category || '').toLowerCase() === catLower || t.categoryId === category);
+  }
+  if (month) {
+    arr = arr.filter(t => monthKey(t.date) === month);
+  } else if (startMonth || endMonth) {
+    const start = startMonth || '0000-00';
+    const end = endMonth || '9999-99';
+    arr = arr.filter(t => {
+      const m = monthKey(t.date);
+      return m >= start && m <= end;
+    });
+  }
+  return ar_coder;new
+</}
 }
 
 function toCSV(db, txs) {
@@ -1020,6 +1070,64 @@ app.get('/api/export/transactions.ofx', async (req, res) => {
   res.send(out);
 });
 
+/**
+ * Bulk export ZIP
+ * query:
+ *  - mode=month|category
+ *  - format=csv|qif|ofx
+ *  - accountId?=
+ *  - month?= or startMonth?= & endMonth?=
+ *  - category?= (optional filter)
+ */
+app.get('/api/export/bulk.zip', async (req, res) => {
+  const db = await readDB();
+  const { mode = 'month', format = 'csv' } = req.query;
+  const txs = filterTransactions(db, req.query);
+  const zip = new JSZip();
+
+  function sanitize(name) {
+    return String(name).replace(/[^a-z0-9._-]+/gi, '_').slice(0, 64);
+  }
+
+  if (mode === 'category') {
+    const groups = {};
+    for (const t of txs) {
+      const cat = t.category || (t.categoryId || 'Uncategorized');
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(t);
+    }
+    for (const [cat, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = `${sanitize(cat)}.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else {
+    // mode=month
+    const groups = {};
+    for (const t of txs) {
+      const m = monthKey(t.date);
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(t);
+    }
+    for (const [m, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = `${sanitize(m)}.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  }
+
+  const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+  res.setHeader('content-type', 'application/zip');
+  res.setHeader('content-disposition', 'attachment; filename="export.zip"');
+  res.send(buffer);
+});
+
 // Handle favicon to avoid 404 noise
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
@@ -1028,6 +1136,10 @@ app.get(/^\/(?!api|webhooks|n8n).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+module.exports = app;

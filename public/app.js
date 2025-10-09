@@ -104,6 +104,18 @@ async function loadAccounts() {
     });
   }
 
+  // fill rule accounts multiselect
+  const ruleAccSel = document.getElementById('ruleAccounts');
+  if (ruleAccSel) {
+    ruleAccSel.innerHTML = '';
+    accounts.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = `${a.name} (${a.type})`;
+      ruleAccSel.appendChild(opt);
+    });
+  }
+
   renderOverview(accounts);
 }
 
@@ -272,11 +284,10 @@ function initBudgetMonth() {
   state.month = m?.value || monthVal();
 }
 
-
 async function loadCategories() {
   const data = await jsonFetch('/api/categories');
   state.categories = Array.isArray(data) ? data : [];
-  // fill datalist for tx form
+  // datalist for tx form
   const dl = document.getElementById('catList');
   if (dl) {
     dl.innerHTML = '';
@@ -286,7 +297,7 @@ async function loadCategories() {
       dl.appendChild(opt);
     });
   }
-  // fill budget category select
+  // budget category select
   const sel = document.getElementById('budCategory');
   if (sel) {
     sel.innerHTML = '';
@@ -299,7 +310,7 @@ async function loadCategories() {
         sel.appendChild(opt);
       });
   }
-  // fill rule category select
+  // rule category select
   const ruleSel = document.getElementById('ruleCategory');
   if (ruleSel) {
     ruleSel.innerHTML = '';
@@ -308,6 +319,21 @@ async function loadCategories() {
       opt.value = c.id;
       opt.textContent = `${c.name} (${c.type})`;
       ruleSel.appendChild(opt);
+    });
+  }
+  // export category
+  const expCatSel = document.getElementById('expCategory');
+  if (expCatSel) {
+    expCatSel.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = 'All Categories';
+    expCatSel.appendChild(allOpt);
+    state.categories.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      expCatSel.appendChild(opt);
     });
   }
   renderCategoryList();
@@ -345,7 +371,6 @@ function renderCategoryList() {
         </div>
       </div>
     `;
-    // attach events
     const btnEdit = row.querySelector('.cat-edit');
     const btnDelete = row.querySelector('.cat-delete');
     const editForm = row.querySelector('.cat-edit-form');
@@ -355,7 +380,7 @@ function renderCategoryList() {
     const typeSel = row.querySelector('.cat-type');
 
     row.tabIndex = 0;
-    row.addEventListener('keydown', async (e) => {
+    row.addEventListener('keydown', (e) => {
       if (e.key.toLowerCase() === 'e') {
         editForm.classList.remove('hidden');
       } else if (e.key === 'Delete') {
@@ -364,10 +389,10 @@ function renderCategoryList() {
     });
 
     btnEdit.addEventListener('click', () => {
-      editForm.classList.toggle('hidden', false);
+      editForm.classList.remove('hidden');
     });
     btnCancel.addEventListener('click', () => {
-      editForm.classList.toggle('hidden', true);
+      editForm.classList.add('hidden');
       nameInput.value = c.name;
       typeSel.value = c.type;
     });
@@ -434,7 +459,7 @@ document.getElementById('addBudgetForm')?.addEventListener('submit', async (e) =
   }
 });
 
-/* Budget report with edit/delete and summary */
+/* Budget report */
 async function loadBudgetReport() {
   const month = state.month || monthVal();
   const res = await jsonFetch(`/api/reports/budget?month=${encodeURIComponent(month)}`);
@@ -665,6 +690,11 @@ document.getElementById('addRuleForm')?.addEventListener('submit', async (e) => 
   const fd = new FormData(e.target);
   const body = Object.fromEntries(fd.entries());
   body.priority = Number(body.priority || 0);
+  const accSel = document.getElementById('ruleAccounts');
+  if (accSel) {
+    const selected = Array.from(accSel.options).filter(o => o.selected).map(o => o.value);
+    if (selected.length) body.accounts = selected;
+  }
   const res = await jsonFetch('/api/rules', { method: 'POST', body: JSON.stringify(body) });
   if (res && !res.error) {
     e.target.reset();
@@ -672,6 +702,32 @@ document.getElementById('addRuleForm')?.addEventListener('submit', async (e) => 
   } else {
     alert(res.error || 'Failed to add rule');
   }
+});
+
+// Regex tester
+function updateRegexTest() {
+  const pat = document.getElementById('ruleRegex')?.value || '';
+  const flags = document.getElementById('ruleRegexFlags')?.value || '';
+  const text = document.getElementById('regexTestText')?.value || '';
+  const out = document.getElementById('regexTestResult');
+  if (!out) return;
+  if (!pat) {
+    out.textContent = '';
+    out.className = 'text-xs';
+    return;
+  }
+  try {
+    const re = new RegExp(pat, flags);
+    const ok = re.test(text);
+    out.textContent = ok ? 'Match' : 'No match';
+    out.className = `text-xs ${ok ? 'text-green-600' : 'text-red-600'}`;
+  } catch (err) {
+    out.textContent = `Invalid regex: ${err.message}`;
+    out.className = 'text-xs text-red-600';
+  }
+}
+['ruleRegex', 'ruleRegexFlags', 'regexTestText'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', updateRegexTest);
 });
 
 /* Import CSV/OFX/QIF */
@@ -688,7 +744,6 @@ function fillMappingOptions(headers = []) {
       sel.appendChild(opt);
     });
   });
-  // preselect common
   const trySet = (id, names) => {
     const sel = document.getElementById(id);
     if (!sel) return;
@@ -712,49 +767,48 @@ function parseOFX(text) {
     const m = src.match(new RegExp(`<${tag}>([^<\\n\\r]+)`, 'i'));
     return m ? m[1].trim() : '';
   };
-  // Try multi-statement blocks
   const stmts = text.match(/<STMTRS>[\s\S]*?<\/STMTRS>/gi);
   if (stmts && stmts.length) {
     for (const s of stmts) {
       const acctId = getTag(s, 'ACCTID') || '';
       const bankId = getTag(s, 'BANKID') || '';
-      const acctType = getTag(s, 'ACCTTYPE') || '';
       const account = `OFX ${acctId || bankId || 'Account'}`;
-      const trs = s.match(/<STMTTRN>[\\s\\S]*?<\\/STMTTRN>/gi) || [];
+      const trs = s.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
       for (const b of trs) {
         const dt = getTag(b, 'DTPOSTED');
         const amt = getTag(b, 'TRNAMT');
         const name = getTag(b, 'NAME');
         const memo = getTag(b, 'MEMO');
         const type = getTag(b, 'TRNTYPE');
-        let date = dt && /^\\d{8,14}$/.test(dt) ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
+        let date = dt && /^\d{8,14}$/.test(dt) ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
         recs.push({
           date,
           amount: amt,
           type,
           description: name || memo || '',
           note: memo || '',
-          account
+          account,
+          ofxAcctId: acctId || bankId || ''
         });
       }
     }
   } else {
-    // Fallback: flatten all transactions
-    const blocks = text.match(/<STMTTRN>[\\s\\S]*?<\\/STMTTRN>/gi) || [];
+    const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
     for (const b of blocks) {
       const dt = getTag(b, 'DTPOSTED');
       const amt = getTag(b, 'TRNAMT');
       const name = getTag(b, 'NAME');
       const memo = getTag(b, 'MEMO');
       const type = getTag(b, 'TRNTYPE');
-      let date = dt && /^\\d{8,14}$/.test(dt) ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
+      let date = dt && /^\d{8,14}$/.test(dt) ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
       recs.push({
         date,
         amount: amt,
         type,
         description: name || memo || '',
         note: memo || '',
-        account: 'OFX'
+        account: 'OFX',
+        ofxAcctId: ''
       });
     }
   }
@@ -768,7 +822,6 @@ function parseQIF(text) {
   for (const line of lines) {
     if (line === '^') {
       if (cur.D || cur.date) {
-        // build
         let d = cur.D || cur.date;
         if (d && /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(d)) {
           const parts = d.split(/[\/']/);
@@ -799,6 +852,47 @@ function parseQIF(text) {
   return recs;
 }
 
+async function renderOfxMapUI(detectedIds = []) {
+  const cont = document.getElementById('ofxMapContainer');
+  if (!cont) return;
+  const data = await jsonFetch('/api/settings/ofx-map');
+  const map = data?.map || {};
+  const accounts = data?.accounts || [];
+  const accOpts = accounts.map(a => `<option value="${a.id}">${a.name}</option>`).join('');
+  cont.innerHTML = '';
+  detectedIds.forEach(id => {
+    const row = document.createElement('div');
+    row.className = 'flex items-center gap-2';
+    row.innerHTML = `
+      <div class="text-sm w-40">${id}</div>
+      <select data-ofx="${id}" class="border rounded px-2 py-1 text-sm">
+        <option value="">-- Select account --</option>
+        ${accOpts}
+      </select>
+    `;
+    const sel = row.querySelector('select');
+    sel.value = map[id] || '';
+    cont.appendChild(row);
+  });
+}
+
+document.getElementById('saveOfxMapBtn')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  const cont = document.getElementById('ofxMapContainer');
+  if (!cont) return;
+  const sels = Array.from(cont.querySelectorAll('select[data-ofx]'));
+  const map = {};
+  sels.forEach(s => {
+    if (s.value) map[s.getAttribute('data-ofx')] = s.value;
+  });
+  const res = await jsonFetch('/api/settings/ofx-map', { method: 'POST', body: JSON.stringify({ map }) });
+  if (res && !res.error) {
+    alert('OFX mapping saved');
+  } else {
+    alert(res.error || 'Failed to save mapping');
+  }
+});
+
 document.getElementById('csvFile')?.addEventListener('change', async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
@@ -827,6 +921,10 @@ document.getElementById('csvFile')?.addEventListener('change', async (e) => {
     state.csvHeaders = Object.keys(recs[0] || {});
     fillMappingOptions(state.csvHeaders);
     document.getElementById('csvPreview').textContent = JSON.stringify(state.csvRecords.slice(0, 10), null, 2);
+    if (ext === 'ofx') {
+      const ids = Array.from(new Set((recs.map(r => r.ofxAcctId).filter(Boolean))));
+      await renderOfxMapUI(ids);
+    }
   }
 });
 
@@ -869,13 +967,81 @@ document.getElementById('csvImportBtn')?.addEventListener('click', async (e) => 
   }
 });
 
+/* Export & Preview */
+function buildTxQuery(limit = 1000) {
+  const params = new URLSearchParams();
+  const acc = document.getElementById('expAccount')?.value || '';
+  const month = document.getElementById('expMonth')?.value || '';
+  const cat = document.getElementById('expCategory')?.value || '';
+  const start = document.getElementById('expStartMonth')?.value || '';
+  const end = document.getElementById('expEndMonth')?.value || '';
+  if (acc) params.set('accountId', acc);
+  if (cat) params.set('category', cat);
+  if (month) params.set('month', month);
+  if (!month && (start || end)) {
+    if (start) params.set('startMonth', start);
+    if (end) params.set('endMonth', end);
+  }
+  params.set('limit', String(limit));
+  return params.toString();
+}
+
+document.getElementById('expPreviewBtn')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  const qs = buildTxQuery(2000);
+  const rows = await jsonFetch(`/api/wallet/transactions?${qs}`);
+  const accounts = await jsonFetch('/api/wallet/accounts');
+  const accMap = Object.fromEntries((accounts || []).map(a => [a.id, a.name]));
+  const table = document.getElementById('expPreviewTable');
+  if (!table) return;
+  table.innerHTML = '';
+  const head = document.createElement('thead');
+  head.innerHTML = `<tr class="text-left text-slate-500">
+    <th class="py-2">Date</th><th>Account</th><th>Type</th><th>Category</th><th class="text-right">Amount</th><th>Note</th>
+  </tr>`;
+  table.appendChild(head);
+  const body = document.createElement('tbody');
+  (rows || []).forEach(t => {
+    const tr = document.createElement('tr');
+    tr.className = 'border-t';
+    tr.innerHTML = `<td class="py-1">${t.date}</td>
+      <td>${accMap[t.accountId] || t.accountId}</td>
+      <td>${t.type}</td>
+      <td>${t.category || ''}</td>
+      <td class="text-right">${Number(t.amount).toFixed(2)}</td>
+      <td>${t.note || ''}</td>`;
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+});
+
+document.getElementById('expCsvBtn')?.addEventListener('click', () => {
+  const qs = buildTxQuery();
+  window.open(`/api/export/transactions.csv?${qs}`, '_blank');
+});
+document.getElementById('expQifBtn')?.addEventListener('click', () => {
+  const qs = buildTxQuery();
+  window.open(`/api/export/transactions.qif?${qs}`, '_blank');
+});
+document.getElementById('expOfxBtn')?.addEventListener('click', () => {
+  const qs = buildTxQuery();
+  window.open(`/api/export/transactions.ofx?${qs}`, '_blank');
+});
+document.getElementById('expZipBtn')?.addEventListener('click', () => {
+  const params = new URLSearchParams(buildTxQuery());
+  const fmt = document.getElementById('expFormat')?.value || 'csv';
+  const mode = document.getElementById('expMode')?.value || 'month';
+  params.set('format', fmt);
+  params.set('mode', mode);
+  window.open(`/api/export/bulk.zip?${params.toString()}`, '_blank');
+});
+
 /* TradingView */
 function loadTradingView(sym) {
   const containerId = 'tv_container';
   const el = document.getElementById(containerId);
   if (!el || typeof TradingView === 'undefined') return;
   el.innerHTML = '';
-  // TradingView widget requires global constructor
   new TradingView.widget({
     autosize: true,
     symbol: sym || 'NASDAQ:AAPL',
@@ -891,7 +1057,6 @@ function loadTradingView(sym) {
     container_id: containerId
   });
 }
-
 document.getElementById('tvLoad')?.addEventListener('click', () => {
   const symbol = document.getElementById('tvSymbol').value || 'NASDAQ:AAPL';
   loadTradingView(symbol);
@@ -949,7 +1114,6 @@ function appendChat(role, content) {
   box.appendChild(wrap);
   box.scrollTop = box.scrollHeight;
 }
-
 document.getElementById('chatSend')?.addEventListener('click', async () => {
   const input = document.getElementById('chatInput');
   const content = input.value.trim();
@@ -987,4 +1151,4 @@ document.getElementById('chatSend')?.addEventListener('click', async () => {
   initBudgetMonth();
   loadBudgetReport();
   loadTradingView(document.getElementById('tvSymbol')?.value);
-}_code)(new)</;
+})();
