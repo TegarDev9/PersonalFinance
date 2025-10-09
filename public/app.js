@@ -88,6 +88,22 @@ async function loadAccounts() {
     sel.appendChild(option);
   });
 
+  // fill export account select
+  const expSel = document.getElementById('expAccount');
+  if (expSel) {
+    expSel.innerHTML = '';
+    const allOpt = document.createElement('option');
+    allOpt.value = '';
+    allOpt.textContent = 'All Accounts';
+    expSel.appendChild(allOpt);
+    accounts.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name;
+      expSel.appendChild(opt);
+    });
+  }
+
   renderOverview(accounts);
 }
 
@@ -174,12 +190,20 @@ function renderOverview(accounts) {
 }
 
 /* Undo/Redo */
-state.undoStack = [];
-state.redoStack = [];
+state.undoStack = state.undoStack || [];
+state.redoStack = state.redoStack || [];
+
+function saveUndoRedo() {
+  try {
+    localStorage.setItem('finUndo', JSON.stringify(state.undoStack));
+    localStorage.setItem('finRedo', JSON.stringify(state.redoStack));
+  } catch {}
+}
 
 function pushUndo(action) {
   state.undoStack.push(action);
   state.redoStack = [];
+  saveUndoRedo();
   updateUndoBar();
 }
 
@@ -201,6 +225,7 @@ async function doUndo() {
     await loadBudgetReport();
   }
   state.redoStack.push(a);
+  saveUndoRedo();
   updateUndoBar();
 }
 
@@ -216,6 +241,7 @@ async function doRedo() {
     await loadBudgetReport();
   }
   state.undoStack.push(a);
+  saveUndoRedo();
   updateUndoBar();
 }
 
@@ -241,8 +267,11 @@ document.getElementById('redoBtn')?.addEventListener('click', doRedo);
 function initBudgetMonth() {
   const m = document.getElementById('budMonth');
   if (m && !m.value) m.value = monthVal();
+  const em = document.getElementById('expMonth');
+  if (em && !em.value) em.value = m?.value || monthVal();
   state.month = m?.value || monthVal();
 }
+
 
 async function loadCategories() {
   const data = await jsonFetch('/api/categories');
@@ -534,13 +563,24 @@ function renderRulesList() {
   list.innerHTML = '';
   (state.rules || []).forEach(r => {
     const cat = state.categories.find(c => c.id === r.categoryId);
+    const infoParts = [];
+    if (r.keywords && r.keywords.length) infoParts.push(`Keywords: ${r.keywords.join(', ')}`);
+    if (r.amountMin !== undefined || r.amountMax !== undefined) {
+      const min = r.amountMin !== undefined ? r.amountMin : '';
+      const max = r.amountMax !== undefined ? r.amountMax : '';
+      infoParts.push(`Amount: [${min} .. ${max}]`);
+    }
+    if (r.accounts && r.accounts.length) infoParts.push(`Accounts: ${r.accounts.join(', ')}`);
+    if (r.regex) infoParts.push(`Regex: /${r.regex}/${r.regexFlags || ''}`);
+    infoParts.push(`Category: ${cat ? cat.name : r.categoryId}`);
+    infoParts.push(`Priority: ${r.priority || 0}`);
     const row = document.createElement('div');
     row.className = 'py-2';
     row.innerHTML = `
       <div class="flex items-center justify-between">
         <div>
           <div class="font-medium text-slate-800">${r.name}</div>
-          <div class="text-xs text-slate-500">Keywords: ${(r.keywords || []).join(', ')} • Category: ${cat ? cat.name : r.categoryId} • Priority: ${r.priority || 0}</div>
+          <div class="text-xs text-slate-500">${infoParts.join(' • ')}</div>
         </div>
         <div class="flex gap-2">
           <button class="px-2 py-1 border rounded text-xs rule-edit">Edit</button>
@@ -548,12 +588,17 @@ function renderRulesList() {
         </div>
       </div>
       <div class="mt-2 hidden rule-edit-form">
-        <div class="grid grid-cols-4 gap-2">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
           <input type="text" class="border rounded px-2 py-1 text-sm rule-name" value="${r.name}">
           <input type="text" class="border rounded px-2 py-1 text-sm rule-kws" value="${(r.keywords || []).join(', ')}">
           <select class="border rounded px-2 py-1 text-sm rule-cat">${state.categories.map(c => `<option value="${c.id}" ${c.id===r.categoryId?'selected':''}>${c.name}</option>`).join('')}</select>
-          <div class="flex items-center gap-2">
-            <input type="number" step="1" class="border rounded px-2 py-1 text-sm rule-pri" value="${r.priority || 0}" style="width:100%;">
+          <input type="number" step="1" class="border rounded px-2 py-1 text-sm rule-pri" value="${r.priority || 0}" placeholder="Priority">
+          <input type="number" step="0.01" class="border rounded px-2 py-1 text-sm rule-min" value="${r.amountMin !== undefined ? r.amountMin : ''}" placeholder="Amount min">
+          <input type="number" step="0.01" class="border rounded px-2 py-1 text-sm rule-max" value="${r.amountMax !== undefined ? r.amountMax : ''}" placeholder="Amount max">
+          <input type="text" class="border rounded px-2 py-1 text-sm rule-accs" value="${(r.accounts || []).join(', ')}" placeholder="Accounts (comma sep)">
+          <div class="grid grid-cols-2 gap-2">
+            <input type="text" class="border rounded px-2 py-1 text-sm rule-rex" value="${r.regex || ''}" placeholder="Regex">
+            <input type="text" class="border rounded px-2 py-1 text-sm rule-rflg" value="${r.regexFlags || ''}" placeholder="Flags">
           </div>
         </div>
         <div class="mt-2 flex gap-2">
@@ -571,6 +616,11 @@ function renderRulesList() {
     const kwInput = row.querySelector('.rule-kws');
     const catSel = row.querySelector('.rule-cat');
     const priInput = row.querySelector('.rule-pri');
+    const minInput = row.querySelector('.rule-min');
+    const maxInput = row.querySelector('.rule-max');
+    const accsInput = row.querySelector('.rule-accs');
+    const rexInput = row.querySelector('.rule-rex');
+    const rflgInput = row.querySelector('.rule-rflg');
 
     btnEdit.addEventListener('click', () => form.classList.remove('hidden'));
     btnCancel.addEventListener('click', () => form.classList.add('hidden'));
@@ -579,7 +629,12 @@ function renderRulesList() {
         name: nameInput.value.trim(),
         keywords: kwInput.value,
         categoryId: catSel.value,
-        priority: Number(priInput.value || 0)
+        priority: Number(priInput.value || 0),
+        amountMin: minInput.value !== '' ? Number(minInput.value) : undefined,
+        amountMax: maxInput.value !== '' ? Number(maxInput.value) : undefined,
+        accounts: accsInput.value,
+        regex: rexInput.value || undefined,
+        regexFlags: rflgInput.value || undefined
       };
       const res = await jsonFetch(`/api/rules/${encodeURIComponent(r.id)}`, {
         method: 'PATCH',
@@ -653,25 +708,55 @@ function fillMappingOptions(headers = []) {
 
 function parseOFX(text) {
   const recs = [];
-  const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
-  for (const b of blocks) {
-    const get = (tag) => {
-      const m = b.match(new RegExp(`<${tag}>([^<\n\r]+)`,'i'));
-      return m ? m[1].trim() : '';
-    };
-    const dt = get('DTPOSTED');
-    const amt = get('TRNAMT');
-    const name = get('NAME');
-    const memo = get('MEMO');
-    let date = dt && /^\d{8,14}$/.test(dt) ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
-    recs.push({
-      date,
-      amount: amt,
-      type: get('TRNTYPE'),
-      description: name || memo || '',
-      note: memo || '',
-      account: 'OFX'
-    });
+  const getTag = (src, tag) => {
+    const m = src.match(new RegExp(`<${tag}>([^<\\n\\r]+)`, 'i'));
+    return m ? m[1].trim() : '';
+  };
+  // Try multi-statement blocks
+  const stmts = text.match(/<STMTRS>[\s\S]*?<\/STMTRS>/gi);
+  if (stmts && stmts.length) {
+    for (const s of stmts) {
+      const acctId = getTag(s, 'ACCTID') || '';
+      const bankId = getTag(s, 'BANKID') || '';
+      const acctType = getTag(s, 'ACCTTYPE') || '';
+      const account = `OFX ${acctId || bankId || 'Account'}`;
+      const trs = s.match(/<STMTTRN>[\\s\\S]*?<\\/STMTTRN>/gi) || [];
+      for (const b of trs) {
+        const dt = getTag(b, 'DTPOSTED');
+        const amt = getTag(b, 'TRNAMT');
+        const name = getTag(b, 'NAME');
+        const memo = getTag(b, 'MEMO');
+        const type = getTag(b, 'TRNTYPE');
+        let date = dt && /^\\d{8,14}$/.test(dt) ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
+        recs.push({
+          date,
+          amount: amt,
+          type,
+          description: name || memo || '',
+          note: memo || '',
+          account
+        });
+      }
+    }
+  } else {
+    // Fallback: flatten all transactions
+    const blocks = text.match(/<STMTTRN>[\\s\\S]*?<\\/STMTTRN>/gi) || [];
+    for (const b of blocks) {
+      const dt = getTag(b, 'DTPOSTED');
+      const amt = getTag(b, 'TRNAMT');
+      const name = getTag(b, 'NAME');
+      const memo = getTag(b, 'MEMO');
+      const type = getTag(b, 'TRNTYPE');
+      let date = dt && /^\\d{8,14}$/.test(dt) ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
+      recs.push({
+        date,
+        amount: amt,
+        type,
+        description: name || memo || '',
+        note: memo || '',
+        account: 'OFX'
+      });
+    }
   }
   return recs;
 }
@@ -887,6 +972,13 @@ document.getElementById('chatSend')?.addEventListener('click', async () => {
 
 /* Initialize */
 (function init() {
+  try {
+    const u = JSON.parse(localStorage.getItem('finUndo') || '[]');
+    const r = JSON.parse(localStorage.getItem('finRedo') || '[]');
+    if (Array.isArray(u)) state.undoStack = u;
+    if (Array.isArray(r)) state.redoStack = r;
+    updateUndoBar();
+  } catch {}
   show('wallet');
   refreshSummary();
   loadAccounts();
@@ -895,4 +987,4 @@ document.getElementById('chatSend')?.addEventListener('click', async () => {
   initBudgetMonth();
   loadBudgetReport();
   loadTradingView(document.getElementById('tvSymbol')?.value);
-})();
+}_code)(new)</;

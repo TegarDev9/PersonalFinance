@@ -108,14 +108,31 @@ Categories & Budgets
 
 Rules (auto-categorization)
 - GET /api/rules
-- POST /api/rules { name, keywords: string|array, categoryId, type?, priority? }
-- PATCH /api/rules/:id
+- POST /api/rules
+  - body: {
+      name,
+      keywords?: string|array,
+      categoryId,
+      type?: 'expense'|'income'|'transfer',
+      priority?: number,
+      amountMin?: number,
+      amountMax?: number,
+      accounts?: string|array,   # account IDs or names (comma separated allowed)
+      regex?: string,            # JS regex pattern
+      regexFlags?: string        # e.g., 'i'
+    }
+- PATCH /api/rules/:id   # accepts same fields as POST for updates
 - DELETE /api/rules/:id
 
 Import
 - POST /api/import/transactions
   - body: { records: Array<Object>, mapping?: { date, account, accountId?, type, amount, category, note, description }, autoCategorize?: boolean }
-  - Supports CSV/OFX/QIF (CSV parsed in browser, OFX/QIF parsed in browser to records, then posted here)
+  - Supports CSV/OFX/QIF (CSV parsed in browser, OFX/QIF parsed in browser to records, then posted here). OFX multi-statement is supported (account detected from each STMTRS).
+
+Export
+- GET /api/export/transactions.csv?month=YYYY-MM&accountId=ACC_ID
+- GET /api/export/transactions.qif?month=YYYY-MM&accountId=ACC_ID
+- GET /api/export/transactions.ofx?month=YYYY-MM&accountId=ACC_ID   # multi-account: multiple STMTRS blocks
 
 Sentiment
 - POST /api/sentiment/analyze

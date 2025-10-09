@@ -242,6 +242,26 @@
             </div>
           </div>
 
+          <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm mt-6">
+            <div class="font-semibold text-slate-800 mb-3">Export Transactions</div>
+            <div class="grid md:grid-cols-3 gap-4">
+              <div class="space-y-2">
+                <label class="text-xs text-slate-600">Account</label>
+                <select id="expAccount" class="w-full border rounded-lg px-3 py-2"></select>
+                <label class="text-xs text-slate-600">Month (optional)</label>
+                <input id="expMonth" type="month" class="w-full border rounded-lg px-3 py-2" />
+              </div>
+              <div class="space-y-2 md:col-span-2">
+                <div class="grid grid-cols-3 gap-2">
+                  <button id="expCsvBtn" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Export CSV</button>
+                  <button id="expQifBtn" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Export QIF</button>
+                  <button id="expOfxBtn" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Export OFX</button>
+                </div>
+                <div class="text-xs text-slate-500">Filters apply to all export formats.</div>
+              </div>
+            </div>
+          </div>
+
         </section>
 
         <section id="view_trading" class="p-6 hidden space-y-6">

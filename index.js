@@ -111,7 +111,7 @@ function ensureCategory(db, name, type = 'expense') {
 }
 
 function autoCategorize(db, rec) {
-  // rec: { type, amount, category, note, description, merchant, payee }
+  // rec: { type, amount, category, note, description, merchant, payee, accountId, accountName }
   if (rec.category) {
     const existing = findCategoryByName(db, rec.category);
     if (existing) return { categoryName: existing.name, categoryId: existing.id };
@@ -120,17 +120,51 @@ function autoCategorize(db, rec) {
     rec.description, rec.note, rec.merchant, rec.payee, rec.category
   ].filter(Boolean).join(' ').toLowerCase();
 
+  const absAmt = Math.abs(Number(rec.amount) || 0);
   // decide expected type
   const expType = rec.type || ((Number(rec.amount) || 0) < 0 ? 'expense' : 'income');
+
+  function ruleMatches(rule) {
+    if (!rule || !rule.categoryId) return false;
+    // type check (if provided)
+    if (rule.type && rec.type && rule.type !== rec.type) return false;
+    // amount range check
+    if (rule.amountMin !== undefined && Number.isFinite(Number(rule.amountMin))) {
+      if (absAmt < Number(rule.amountMin)) return false;
+    }
+    if (rule.amountMax !== undefined && Number.isFinite(Number(rule.amountMax))) {
+      if (absAmt > Number(rule.amountMax)) return false;
+    }
+    // account check
+    if (Array.isArray(rule.accounts) && rule.accounts.length > 0) {
+      const accVals = rule.accounts.map(x => String(x).toLowerCase());
+      const recAcc = (rec.accountId || '').toString().toLowerCase();
+      const recAccName = (rec.accountName || '').toString().toLowerCase();
+      const accOk = accVals.includes(recAcc) || accVals.includes(recAccName);
+      if (!accOk) return false;
+    }
+    // regex check
+    if (rule.regex) {
+      try {
+        const re = new RegExp(rule.regex, rule.regexFlags || '');
+        if (!re.test(text)) return false;
+      } catch {
+        // ignore invalid regex
+      }
+    }
+    // keywords (if provided, at least one must match)
+    if (Array.isArray(rule.keywords) && rule.keywords.length > 0) {
+      const kws = rule.keywords.map(k => (k || '').toString().toLowerCase()).filter(Boolean);
+      if (!kws.some(k => text.includes(k))) return false;
+    }
+    return true;
+  }
 
   // Custom rules (priority desc)
   const rules = Array.isArray(db.rules) ? db.rules.slice().sort((a, b) => (b.priority || 0) - (a.priority || 0)) : [];
   for (const r of rules) {
-    if (!r || !Array.isArray(r.keywords) || !r.categoryId) continue;
-    const kws = r.keywords.map(k => (k || '').toString().toLowerCase()).filter(Boolean);
-    if (kws.length === 0) continue;
-    const matched = kws.some(k => text.includes(k));
-    if (matched) {
+    if (!r || !r.categoryId) continue;
+    if (ruleMatches(r)) {
       const cat = findCategoryById(db, r.categoryId);
       if (cat) {
         return { categoryName: cat.name, categoryId: cat.id };
@@ -427,18 +461,38 @@ app.get('/api/rules', async (req, res) => {
 });
 
 app.post('/api/rules', async (req, res) => {
-  const { name, keywords, categoryId, type, priority = 0 } = req.body || {};
+  const { name, keywords, categoryId, type, priority = 0, amountMin, amountMax, accounts, regex, regexFlags } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
   if (!categoryId) return res.status(400).json({ error: 'categoryId required' });
   const db = await readDB();
   const cat = findCategoryById(db, categoryId);
   if (!cat) return res.status(400).json({ error: 'invalid categoryId' });
+
   let kws = keywords;
   if (typeof kws === 'string') {
     kws = kws.split(',').map(s => s.trim()).filter(Boolean);
   }
-  if (!Array.isArray(kws) || kws.length === 0) return res.status(400).json({ error: 'keywords[] required' });
-  const rule = { id: genId('rule'), name, keywords: kws, categoryId, type: type || undefined, priority: Number(priority) || 0 };
+  if (kws && !Array.isArray(kws)) return res.status(400).json({ error: 'keywords must be string or array' });
+
+  let accs = accounts;
+  if (typeof accs === 'string') {
+    accs = accs.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  if (accs && !Array.isArray(accs)) return res.status(400).json({ error: 'accounts must be string or array' });
+
+  const rule = {
+    id: genId('rule'),
+    name,
+    keywords: Array.isArray(kws) ? kws : [],
+    categoryId,
+    type: type || undefined,
+    priority: Number(priority) || 0,
+    amountMin: amountMin !== undefined ? Number(amountMin) : undefined,
+    amountMax: amountMax !== undefined ? Number(amountMax) : undefined,
+    accounts: Array.isArray(accs) ? accs : [],
+    regex: regex || undefined,
+    regexFlags: regexFlags || undefined
+  };
   db.rules.push(rule);
   await writeDB(db);
   res.json(rule);
@@ -452,6 +506,11 @@ app.patch('/api/rules/:id', async (req, res) => {
   if (payload.keywords && typeof payload.keywords === 'string') {
     payload.keywords = payload.keywords.split(',').map(s => s.trim()).filter(Boolean);
   }
+  if (payload.accounts && typeof payload.accounts === 'string') {
+    payload.accounts = payload.accounts.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  if (payload.amountMin !== undefined) payload.amountMin = Number(payload.amountMin);
+  if (payload.amountMax !== undefined) payload.amountMax = Number(payload.amountMax);
   db.rules[idx] = payload;
   await writeDB(db);
   res.json(db.rules[idx]);
@@ -596,7 +655,7 @@ app.post('/api/import/transactions', async (req, res) => {
       let categoryName = categoryRaw || '';
       let categoryId = undefined;
       if (!categoryName && doAuto) {
-        const auto = autoCategorize(db, { type, amount: amt, category: categoryRaw, note: noteRaw, description: descriptionRaw });
+        const auto = autoCategorize(db, { type, amount: amt, category: categoryRaw, note: noteRaw, description: descriptionRaw, accountId: accId, accountName });
         categoryName = auto.categoryName;
         categoryId = auto.categoryId;
         autoCatzd++;
@@ -813,6 +872,152 @@ app.post('/n8n/forward', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+/**
+ * Export transactions: CSV, QIF, OFX
+ */
+function filterTransactions(db, query) {
+  const month = query.month;
+  const accountId = query.accountId;
+  let arr = db.transactions.slice().sort((a, b) => (a.date > b.date ? 1 : -1));
+  if (month) arr = arr.filter(t => monthKey(t.date) === month);
+  if (accountId) arr = arr.filter(t => t.accountId === accountId);
+  return arr;
+}
+
+function toCSV(db, txs) {
+  const accMap = Object.fromEntries(db.accounts.map(a => [a.id, a]));
+  const esc = (v) => {
+    if (v === undefined || v === null) return '';
+    const s = String(v).replace(/"/g, '""');
+    return `"${s}"`;
+  };
+  const rows = [];
+  rows.push(['date','account','accountId','type','category','amount','note'].map(esc).join(','));
+  for (const t of txs) {
+    rows.push([
+      t.date,
+      accMap[t.accountId]?.name || t.accountId,
+      t.accountId,
+      t.type,
+      t.category || '',
+      Number(t.amount).toFixed(2),
+      t.note || ''
+    ].map(esc).join(','));
+  }
+  return rows.join('\n');
+}
+
+function fmtDateMDY(d) {
+  const [y, m, day] = String(d).slice(0,10).split('-');
+  return `${m}/${day}/${y}`;
+}
+
+function toQIF(db, txs) {
+  const accMap = Object.fromEntries(db.accounts.map(a => [a.id, a]));
+  const lines = ['!Type:Bank'];
+  for (const t of txs) {
+    lines.push(`D${fmtDateMDY(t.date)}`);
+    lines.push(`T${Number(t.amount).toFixed(2)}`);
+    const payee = t.category || '';
+    lines.push(`P${payee}`);
+    if (t.category) lines.push(`L${t.category}`);
+    const accName = accMap[t.accountId]?.name || t.accountId || '';
+    const memo = t.note ? `${t.note} [${accName}]` : `[${accName}]`;
+    if (memo) lines.push(`M${memo}`);
+    lines.push('^');
+  }
+  return lines.join('\n');
+}
+
+function fmtDateYYYYMMDD(d) {
+  const s = String(d).slice(0,10);
+  return s.replace(/-/g, '');
+}
+
+function toOFX(db, txs) {
+  const accMap = Object.fromEntries(db.accounts.map(a => [a.id, a]));
+  const groups = {};
+  for (const t of txs) {
+    if (!groups[t.accountId]) groups[t.accountId] = [];
+    groups[t.accountId].push(t);
+  }
+  const cur = (db.settings && db.settings.baseCurrency) || 'USD';
+  const body = [];
+  body.push('<OFX>');
+  body.push('<BANKMSGSRSV1>');
+  for (const [accId, arr] of Object.entries(groups)) {
+    const acc = accMap[accId] || { id: accId, name: accId, type: 'bank' };
+    const acctType = acc.type === 'credit' ? 'CREDITLINE' : 'CHECKING';
+    body.push('<STMTTRNRS>');
+    body.push('<STMTRS>');
+    body.push(`<CURDEF>${cur}`);
+    body.push('<BANKACCTFROM>');
+    body.push('<BANKID>FINDASH');
+    body.push(`<ACCTID>${acc.id}`);
+    body.push(`<ACCTTYPE>${acctType}`);
+    body.push('</BANKACCTFROM>');
+    body.push('<BANKTRANLIST>');
+    for (const t of arr) {
+      const trnType = Number(t.amount) >= 0 ? 'CREDIT' : 'DEBIT';
+      const name = (t.category || '').slice(0,32) || 'Transaction';
+      const memo = (t.note || '').slice(0,80);
+      body.push('<STMTTRN>');
+      body.push(`<TRNTYPE>${trnType}`);
+      body.push(`<DTPOSTED>${fmtDateYYYYMMDD(t.date)}`);
+      body.push(`<TRNAMT>${Number(t.amount).toFixed(2)}`);
+      body.push(`<FITID>${t.id}`);
+      body.push(`<NAME>${name}`);
+      if (memo) body.push(`<MEMO>${memo}`);
+      body.push('</STMTTRN>');
+    }
+    body.push('</BANKTRANLIST>');
+    body.push('</STMTRS>');
+    body.push('</STMTTRNRS>');
+  }
+  body.push('</BANKMSGSRSV1>');
+  body.push('</OFX>');
+  const header = [
+    'OFXHEADER:100',
+    'DATA:OFXSGML',
+    'VERSION:102',
+    'SECURITY:NONE',
+    'ENCODING:USASCII',
+    'CHARSET:1252',
+    'COMPRESSION:NONE',
+    'OLDFILEUID:NONE',
+    'NEWFILEUID:NONE',
+    ''
+  ].join('\n');
+  return header + body.join('\n');
+}
+
+app.get('/api/export/transactions.csv', async (req, res) => {
+  const db = await readDB();
+  const txs = filterTransactions(db, req.query);
+  const out = toCSV(db, txs);
+  res.setHeader('content-type', 'text/csv; charset=utf-8');
+  res.setHeader('content-disposition', 'attachment; filename="transactions.csv"');
+  res.send(out);
+});
+
+app.get('/api/export/transactions.qif', async (req, res) => {
+  const db = await readDB();
+  const txs = filterTransactions(db, req.query);
+  const out = toQIF(db, txs);
+  res.setHeader('content-type', 'application/x-qif; charset=utf-8');
+  res.setHeader('content-disposition', 'attachment; filename="transactions.qif"');
+  res.send(out);
+});
+
+app.get('/api/export/transactions.ofx', async (req, res) => {
+  const db = await readDB();
+  const txs = filterTransactions(db, req.query);
+  const out = toOFX(db, txs);
+  res.setHeader('content-type', 'application/x-ofx; charset=utf-8');
+  res.setHeader('content-disposition', 'attachment; filename="transactions.ofx"');
+  res.send(out);
 });
 
 // Handle favicon to avoid 404 noise
