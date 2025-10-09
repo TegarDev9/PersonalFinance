@@ -24,7 +24,17 @@ const DEFAULT_DB = {
   holdings: [
     { id: 'hold_aapl', symbol: 'AAPL', quantity: 5, avgPrice: 150 }
   ],
-  settings: { baseCurrency: 'USD' }
+  settings: { baseCurrency: 'USD' },
+  categories: [
+    { id: 'cat_food', name: 'Food & Dining', type: 'expense' },
+    { id: 'cat_transport', name: 'Transport', type: 'expense' },
+    { id: 'cat_entertain', name: 'Entertainment', type: 'expense' },
+    { id: 'cat_rent', name: 'Rent', type: 'expense' },
+    { id: 'cat_salary', name: 'Salary', type: 'income' }
+  ],
+  budgets: [
+    // { id: 'bud_xxx', categoryId: 'cat_food', month: '2025-01', amount: 200 }
+  ]
 };
 
 async function ensureDataFile() {
@@ -36,10 +46,21 @@ async function ensureDataFile() {
   }
 }
 
+function normalizeDB(db) {
+  if (!Array.isArray(db.accounts)) db.accounts = DEFAULT_DB.accounts.slice();
+  if (!Array.isArray(db.transactions)) db.transactions = [];
+  if (!Array.isArray(db.holdings)) db.holdings = [];
+  if (!db.settings) db.settings = { baseCurrency: 'USD' };
+  if (!Array.isArray(db.categories)) db.categories = DEFAULT_DB.categories.slice();
+  if (!Array.isArray(db.budgets)) db.budgets = [];
+  return db;
+}
+
 async function readDB() {
   await ensureDataFile();
   const raw = await fsp.readFile(DB_FILE, 'utf-8');
-  return JSON.parse(raw || '{}');
+  const parsed = JSON.parse(raw || '{}');
+  return normalizeDB(parsed);
 }
 
 async function writeDB(db) {
@@ -49,6 +70,37 @@ async function writeDB(db) {
 
 function genId(prefix = 'id') {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function monthKey(d) {
+  const iso = (d || '').toString();
+  const parts = iso.split('T')[0].split('-');
+  if (parts.length >= 2) return `${parts[0]}-${parts[1]}`;
+  return iso.slice(0, 7);
+}
+
+function findCategoryById(db, id) {
+  return db.categories.find(c => c.id === id);
+}
+
+function findCategoryByName(db, name) {
+  if (!name) return undefined;
+  const n = name.toLowerCase();
+  return db.categories.find(c => c.name.toLowerCase() === n);
+}
+
+function sumSpentForCategoryMonth(db, categoryId, m) {
+  const cat = findCategoryById(db, categoryId);
+  if (!cat) return 0;
+  return db.transactions.reduce((sum, t) => {
+    if (t.type !== 'expense') return sum;
+    if (monthKey(t.date) !== m) return sum;
+    const matchById = t.categoryId && t.categoryId === categoryId;
+    const matchByName = t.category && cat && t.category.toLowerCase() === cat.name.toLowerCase();
+    if (!matchById && !matchByName) return sum;
+    const amt = Math.abs(Number(t.amount) || 0);
+    return sum + amt;
+  }, 0);
 }
 
 // Root route serves the SPA
@@ -120,19 +172,53 @@ app.get('/api/wallet/transactions', async (req, res) => {
   res.json(tx.slice(0, Number(limit)));
 });
 
+async function maybeOverspendNotify(db, tx) {
+  try {
+    const webhook = process.env.N8N_WEBHOOK_URL;
+    if (!webhook) return;
+    const m = monthKey(tx.date);
+    const cat = findCategoryByName(db, tx.category) || (tx.categoryId ? findCategoryById(db, tx.categoryId) : undefined);
+    if (!cat) return;
+    // Find a budget for this category in this month
+    const bud = db.budgets.find(b => b.categoryId === cat.id && b.month === m);
+    if (!bud) return;
+    const spent = sumSpentForCategoryMonth(db, cat.id, m);
+    if (spent <= Number(bud.amount || 0)) return;
+    const payload = {
+      type: 'overspend_alert',
+      month: m,
+      category: { id: cat.id, name: cat.name },
+      budget: Number(bud.amount || 0),
+      spent,
+      transaction: tx
+    };
+    await fetch(webhook, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  } catch {
+    // ignore notify errors
+  }
+}
+
 app.post('/api/wallet/transactions', async (req, res) => {
-  const { date, accountId, type, category, amount, note = '' } = req.body || {};
+  const { date, accountId, type, category, categoryId, amount, note = '' } = req.body || {};
   if (!date || !accountId || !type || typeof amount === 'undefined') {
     return res.status(400).json({ error: 'date, accountId, type, amount required' });
   }
   const db = await readDB();
   const account = db.accounts.find(a => a.id === accountId);
   if (!account) return res.status(400).json({ error: 'invalid accountId' });
-  const tx = { id: genId('tx'), date, accountId, type, category: category || '', amount: Number(amount), note };
+  const tx = { id: genId('tx'), date, accountId, type, category: category || '', categoryId: categoryId || undefined, amount: Number(amount), note };
   db.transactions.push(tx);
   // Simple balance update
   account.balance = Number(account.balance || 0) + Number(amount);
   await writeDB(db);
+  // trigger overspend notification if applicable
+  if (type === 'expense') {
+    await maybeOverspendNotify(db, tx);
+  }
   res.json(tx);
 });
 
@@ -153,7 +239,140 @@ app.post('/api/wallet/holdings', async (req, res) => {
 });
 
 /**
- * Sentiment routes
+ * Categories
+ */
+app.get('/api/categories', async (req, res) => {
+  const db = await readDB();
+  res.json(db.categories);
+});
+
+app.post('/api/categories', async (req, res) => {
+  const { name, type = 'expense', parentId } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const db = await readDB();
+  const exists = db.categories.find(c => c.name.toLowerCase() === name.toLowerCase());
+  if (exists) return res.status(400).json({ error: 'category exists' });
+  const cat = { id: genId('cat'), name, type, parentId: parentId || null };
+  db.categories.push(cat);
+  await writeDB(db);
+  res.json(cat);
+});
+
+app.patch('/api/categories/:id', async (req, res) => {
+  const db = await readDB();
+  const idx = db.categories.findIndex(c => c.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  db.categories[idx] = { ...db.categories[idx], ...req.body };
+  await writeDB(db);
+  res.json(db.categories[idx]);
+});
+
+app.delete('/api/categories/:id', async (req, res) => {
+  const db = await readDB();
+  const before = db.categories.length;
+  db.categories = db.categories.filter(c => c.id !== req.params.id);
+  if (db.categories.length === before) return res.status(404).json({ error: 'not found' });
+  // remove budgets referencing this category
+  db.budgets = db.budgets.filter(b => b.categoryId !== req.params.id);
+  await writeDB(db);
+  res.json({ ok: true });
+});
+
+/**
+ * Budgets
+ */
+app.get('/api/budgets', async (req, res) => {
+  const db = await readDB();
+  const { month } = req.query;
+  if (month) return res.json(db.budgets.filter(b => b.month === month));
+  res.json(db.budgets);
+});
+
+app.post('/api/budgets', async (req, res) => {
+  const { categoryId, month, amount } = req.body || {};
+  if (!categoryId || !month) return res.status(400).json({ error: 'categoryId and month required' });
+  const db = await readDB();
+  const cat = findCategoryById(db, categoryId);
+  if (!cat) return res.status(400).json({ error: 'invalid categoryId' });
+  const exists = db.budgets.find(b => b.categoryId === categoryId && b.month === month);
+  if (exists) return res.status(400).json({ error: 'budget exists for this category & month' });
+  const bud = { id: genId('bud'), categoryId, month, amount: Number(amount) || 0 };
+  db.budgets.push(bud);
+  await writeDB(db);
+  res.json(bud);
+});
+
+app.patch('/api/budgets/:id', async (req, res) => {
+  const db = await readDB();
+  const idx = db.budgets.findIndex(b => b.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  if (req.body.amount !== undefined) db.budgets[idx].amount = Number(req.body.amount) || 0;
+  if (req.body.month) db.budgets[idx].month = req.body.month;
+  if (req.body.categoryId) db.budgets[idx].categoryId = req.body.categoryId;
+  await writeDB(db);
+  res.json(db.budgets[idx]);
+});
+
+app.delete('/api/budgets/:id', async (req, res) => {
+  const db = await readDB();
+  const before = db.budgets.length;
+  db.budgets = db.budgets.filter(b => b.id !== req.params.id);
+  if (db.budgets.length === before) return res.status(404).json({ error: 'not found' });
+  await writeDB(db);
+  res.json({ ok: true });
+});
+
+// Budget report and overspend
+app.get('/api/reports/budget', async (req, res) => {
+  try {
+    const { month } = req.query;
+    if (!month) return res.status(400).json({ error: 'month=YYYY-MM required' });
+    const db = await readDB();
+    const items = db.budgets
+      .filter(b => b.month === month)
+      .map(b => {
+        const cat = findCategoryById(db, b.categoryId);
+        const spent = sumSpentForCategoryMonth(db, b.categoryId, month);
+        const budget = Number(b.amount || 0);
+        const remaining = budget - spent;
+        const percent = budget > 0 ? Math.min(100, Math.round((spent / budget) * 100)) : (spent > 0 ? 100 : 0);
+        return {
+          id: b.id,
+          categoryId: b.categoryId,
+          categoryName: cat ? cat.name : b.categoryId,
+          month,
+          budget,
+          spent,
+          remaining,
+          percent
+        };
+      });
+    res.json({ month, items });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/budget/overspend', async (req, res) => {
+  try {
+    const { month } = req.query;
+    if (!month) return res.status(400).json({ error: 'month=YYYY-MM required' });
+    const db = await readDB();
+    const overs = db.budgets
+      .filter(b => b.month === month)
+      .map(b => {
+        const spent = sumSpentForCategoryMonth(db, b.categoryId, month);
+        return { budgetId: b.id, categoryId: b.categoryId, month, budget: Number(b.amount || 0), spent };
+      })
+      .filter(x => x.spent > x.budget);
+    res.json({ month, overs });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Sentiment routes (existing)
  */
 async function googleSentiment(text) {
   const key = process.env.GOOGLE_CLOUD_API_KEY;
@@ -241,7 +460,7 @@ app.post('/api/sentiment/analyze', async (req, res) => {
 });
 
 /**
- * Economic Calendar and Indicators
+ * Economic Calendar and Indicators (existing)
  */
 app.get('/api/calendar/tradingeconomics', async (req, res) => {
   try {
@@ -279,159 +498,6 @@ app.get('/api/indicators/alphavantage', async (req, res) => {
     if (!r.ok) throw new Error(`Alpha Vantage error: ${r.status}`);
     const data = await r.json();
     res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/**
- * AI chat providers
- */
-function toAnthropicMessages(openaiMessages) {
-  // Convert OpenAI format to Anthropic
-  const messages = [];
-  let system = undefined;
-  for (const m of openaiMessages || []) {
-    if (m.role === 'system') {
-      system = (system ? system + '\n' : '') + m.content;
-    } else if (m.role === 'user' || m.role === 'assistant') {
-      messages.push({
-        role: m.role,
-        content: [{ type: 'text', text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-      });
-    }
-  }
-  return { system, messages };
-}
-
-function toGeminiContents(openaiMessages) {
-  const contents = [];
-  let systemInstruction = undefined;
-  for (const m of openaiMessages || []) {
-    if (m.role === 'system') {
-      systemInstruction = (systemInstruction ? systemInstruction + '\n' : '') + (m.content || '');
-    } else {
-      contents.push({
-        role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
-      });
-    }
-  }
-  return { contents, systemInstruction };
-}
-
-async function aiChat({ provider, model, messages }) {
-  if (provider === 'openai') {
-    const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error('OPENAI_API_KEY not set');
-    const url = 'https://api.openai.com/v1/chat/completions';
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${key}`,
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: model || process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        messages
-      })
-    });
-    if (!r.ok) throw new Error(`OpenAI error: ${r.status}`);
-    const data = await r.json();
-    return { content: data.choices?.[0]?.message?.content || '', raw: data };
-  }
-
-  if (provider === 'anthropic') {
-    const key = process.env.ANTHROPIC_API_KEY;
-    if (!key) throw new Error('ANTHROPIC_API_KEY not set');
-    const { system, messages: anthropicMsgs } = toAnthropicMessages(messages);
-    const r = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: model || process.env.ANTHROPIC_MODEL || 'claude-3-5-sonnet-20240620',
-        max_tokens: 1024,
-        system,
-        messages: anthropicMsgs
-      })
-    });
-    if (!r.ok) throw new Error(`Anthropic error: ${r.status}`);
-    const data = await r.json();
-    const text = data.content?.[0]?.text || '';
-    return { content: text, raw: data };
-  }
-
-  if (provider === 'gemini') {
-    const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || process.env.GOOGLE_AI_API_KEY;
-    if (!key) throw new Error('GEMINI_API_KEY not set');
-    const { contents, systemInstruction } = toGeminiContents(messages);
-    const mdl = encodeURIComponent(model || process.env.GEMINI_MODEL || 'gemini-1.5-flash');
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${mdl}:generateContent?key=${encodeURIComponent(key)}`;
-    const body = {
-      contents
-    };
-    if (systemInstruction) {
-      body.systemInstruction = { parts: [{ text: systemInstruction }] };
-    }
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) throw new Error(`Gemini error: ${r.status}`);
-    const data = await r.json();
-    const text = data.candidates?.[0]?.content?.parts?.map(p => p.text).join('\n') || '';
-    return { content: text, raw: data };
-  }
-
-  if (provider === 'deepseek') {
-    const key = process.env.DEEPSEEK_API_KEY;
-    if (!key) throw new Error('DEEPSEEK_API_KEY not set');
-    const r = await fetch('https://api.deepseek.com/chat/completions', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: model || process.env.DEEPSEEK_MODEL || 'deepseek-chat',
-        messages
-      })
-    });
-    if (!r.ok) throw new Error(`Deepseek error: ${r.status}`);
-    const data = await r.json();
-    return { content: data.choices?.[0]?.message?.content || '', raw: data };
-  }
-
-  if (provider === 'qwen') {
-    const key = process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY;
-    if (!key) throw new Error('QWEN_API_KEY not set');
-    const base = process.env.QWEN_COMPAT_BASE || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-    const r = await fetch(`${base}/chat/completions`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: model || process.env.QWEN_MODEL || 'qwen2.5-72b-instruct',
-        messages
-      })
-    });
-    if (!r.ok) throw new Error(`Qwen error: ${r.status}`);
-    const data = await r.json();
-    return { content: data.choices?.[0]?.message?.content || '', raw: data };
-  }
-
-  throw new Error('Unsupported provider');
-}
-
-app.post('/api/ai/chat', async (req, res) => {
-  try {
-    const { provider = 'openai', model, messages } = req.body || {};
-    if (!Array.isArray(messages) || messages.length === 0) {
-      return res.status(400).json({ error: 'messages[] required' });
-    }
-    const result = await aiChat({ provider, model, messages });
-    res.json({ provider, model, ...result });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

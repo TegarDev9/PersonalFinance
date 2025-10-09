@@ -2,20 +2,25 @@
 const views = ['wallet', 'trading', 'sentiment', 'calendar', 'ai'];
 const state = {
   messages: [{ role: 'system', content: 'You are an AI assistant for finance and trading analysis.' }],
-  chart: null
+  chart: null,
+  categories: [],
+  month: null
 };
 
 function show(view) {
   views.forEach(v => {
-    document.getElementById(`view_${v}`).classList.toggle('hidden', v !== view);
+    document.getElementById(`view_${v}`)?.classList.toggle('hidden', v !== view);
   });
-  document.getElementById('viewTitle').textContent = ({
-    wallet: 'Dompet',
-    trading: 'Trading',
-    sentiment: 'Sentiment',
-    calendar: 'Economic Calendar',
-    ai: 'AI Chat'
-  })[view];
+  const titleEl = document.getElementById('viewTitle');
+  if (titleEl) {
+    titleEl.textContent = ({
+      wallet: 'Dompet',
+      trading: 'Trading',
+      sentiment: 'Sentiment',
+      calendar: 'Economic Calendar',
+      ai: 'AI Chat'
+    })[view];
+  }
 }
 
 document.getElementById('sidebar').addEventListener('click', (e) => {
@@ -26,6 +31,9 @@ document.getElementById('sidebar').addEventListener('click', (e) => {
     refreshSummary();
     loadAccounts();
     loadTransactions();
+    loadCategories();
+    initBudgetMonth();
+    loadBudgetReport();
   }
 });
 
@@ -38,11 +46,17 @@ async function jsonFetch(url, opts = {}) {
   try { return JSON.parse(txt); } catch { return txt; }
 }
 
+function monthVal(d = new Date()) {
+  const y = d.getFullYear();
+  const m = `${d.getMonth() + 1}`.padStart(2, '0');
+  return `${y}-${m}`;
+}
+
 /* Summary bar */
 async function refreshSummary() {
   const data = await jsonFetch('/api/wallet/summary');
   const el = document.getElementById('summaryBar');
-  if (data && data.totals) {
+  if (el && data && data.totals) {
     const c = data.currency || 'USD';
     el.textContent = `Cash: ${data.totals.cash.toFixed(2)} ${c} • Invested: ${data.totals.invested.toFixed(2)} ${c} • Net Worth: ${data.totals.netWorth.toFixed(2)} ${c}`;
   }
@@ -53,6 +67,7 @@ async function loadAccounts() {
   const list = document.getElementById('accountsList');
   const sel = document.getElementById('txAccount');
   const accounts = await jsonFetch('/api/wallet/accounts');
+  if (!list || !sel) return;
   list.innerHTML = '';
   sel.innerHTML = '';
   accounts.forEach(a => {
@@ -74,7 +89,7 @@ async function loadAccounts() {
   renderOverview(accounts);
 }
 
-document.getElementById('addAccountForm').addEventListener('submit', async (e) => {
+document.getElementById('addAccountForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   const body = Object.fromEntries(fd.entries());
@@ -95,6 +110,7 @@ async function loadTransactions() {
   const dbAccounts = await jsonFetch('/api/wallet/accounts');
   const accMap = Object.fromEntries(dbAccounts.map(a => [a.id, a]));
   const tbody = document.getElementById('txTable');
+  if (!tbody) return;
   tbody.innerHTML = '';
   (data || []).forEach(t => {
     const tr = document.createElement('tr');
@@ -110,7 +126,7 @@ async function loadTransactions() {
   });
 }
 
-document.getElementById('addTxForm').addEventListener('submit', async (e) => {
+document.getElementById('addTxForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
   const body = Object.fromEntries(fd.entries());
@@ -120,6 +136,7 @@ document.getElementById('addTxForm').addEventListener('submit', async (e) => {
     e.target.reset();
     loadTransactions();
     refreshSummary();
+    loadBudgetReport(); // update budgets if needed
   } else {
     alert(res.error || 'Failed');
   }
@@ -130,6 +147,7 @@ function renderOverview(accounts) {
   const ctx = document.getElementById('overviewChart');
   const labels = accounts.map(a => a.name);
   const data = accounts.map(a => a.balance || 0);
+  if (!ctx) return;
   if (state.chart) {
     state.chart.data.labels = labels;
     state.chart.data.datasets[0].data = data;
@@ -153,10 +171,122 @@ function renderOverview(accounts) {
   });
 }
 
+/* Categories & Budgets */
+function initBudgetMonth() {
+  const m = document.getElementById('budMonth');
+  if (m && !m.value) m.value = monthVal();
+  state.month = m?.value || monthVal();
+}
+
+async function loadCategories() {
+  const data = await jsonFetch('/api/categories');
+  state.categories = Array.isArray(data) ? data : [];
+  // fill datalist for tx form
+  const dl = document.getElementById('catList');
+  if (dl) {
+    dl.innerHTML = '';
+    state.categories.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.name;
+      dl.appendChild(opt);
+    });
+  }
+  // fill budget category select
+  const sel = document.getElementById('budCategory');
+  if (sel) {
+    sel.innerHTML = '';
+    state.categories
+      .filter(c => c.type === 'expense')
+      .forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name;
+        sel.appendChild(opt);
+      });
+  }
+}
+
+document.getElementById('addCategoryForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  const res = await jsonFetch('/api/categories', { method: 'POST', body: JSON.stringify(body) });
+  if (res && !res.error) {
+    e.target.reset();
+    await loadCategories();
+  } else {
+    alert(res.error || 'Failed to add category');
+  }
+});
+
+document.getElementById('budMonth')?.addEventListener('change', () => {
+  state.month = document.getElementById('budMonth').value || monthVal();
+  loadBudgetReport();
+});
+
+document.getElementById('addBudgetForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  body.month = state.month || monthVal();
+  body.amount = Number(body.amount || 0);
+  const res = await jsonFetch('/api/budgets', { method: 'POST', body: JSON.stringify(body) });
+  if (res && !res.error) {
+    e.target.reset();
+    loadBudgetReport();
+  } else {
+    alert(res.error || 'Failed to add budget');
+  }
+});
+
+async function loadBudgetReport() {
+  const month = state.month || monthVal();
+  const res = await jsonFetch(`/api/reports/budget?month=${encodeURIComponent(month)}`);
+  const list = document.getElementById('budgetList');
+  const oversEl = document.getElementById('overspendList');
+  if (!list) return;
+  list.innerHTML = '';
+  const items = res?.items || [];
+  items.forEach(it => {
+    const pct = it.percent || 0;
+    const row = document.createElement('div');
+    row.className = 'p-3 bg-white border rounded-lg';
+    row.innerHTML = `
+      <div class="flex items-center justify-between">
+        <div class="font-medium text-slate-800">${it.categoryName}</div>
+        <div class="text-sm text-slate-600">${it.spent.toFixed(2)} / ${it.budget.toFixed(2)}</div>
+      </div>
+      <div class="w-full h-2 bg-slate-100 rounded mt-2 overflow-hidden">
+        <div class="h-2 ${it.spent > it.budget ? 'bg-red-500' : 'bg-brand-600'}" style="width: ${pct}%;"></div>
+      </div>
+      <div class="text-xs text-slate-500 mt-1">${pct}% used · Remaining ${it.remaining.toFixed(2)}</div>
+    `;
+    list.appendChild(row);
+  });
+
+  if (oversEl) {
+    const overs = await jsonFetch(`/api/budget/overspend?month=${encodeURIComponent(month)}`);
+    oversEl.innerHTML = '';
+    if (overs?.overs?.length) {
+      const wrap = document.createElement('div');
+      wrap.className = 'p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700';
+      wrap.innerHTML = `<div class="font-medium mb-1">Overspending Alerts</div>
+        <ul class="list-disc ml-5">${overs.overs.map(o => {
+          const cat = state.categories.find(c => c.id === o.categoryId);
+          const name = cat ? cat.name : o.categoryId;
+          return `<li>${name}: spent ${o.spent.toFixed(2)} > budget ${o.budget.toFixed(2)}</li>`;
+        }).join('')}</ul>`;
+      oversEl.appendChild(wrap);
+    }
+  }
+}
+
 /* TradingView */
 function loadTradingView(sym) {
   const containerId = 'tv_container';
-  document.getElementById(containerId).innerHTML = '';
+  const el = document.getElementById(containerId);
+  if (!el || typeof TradingView === 'undefined') return;
+  el.innerHTML = '';
   // TradingView widget requires global constructor
   new TradingView.widget({
     autosize: true,
@@ -174,13 +304,13 @@ function loadTradingView(sym) {
   });
 }
 
-document.getElementById('tvLoad').addEventListener('click', () => {
+document.getElementById('tvLoad')?.addEventListener('click', () => {
   const symbol = document.getElementById('tvSymbol').value || 'NASDAQ:AAPL';
   loadTradingView(symbol);
 });
 
 /* Sentiment */
-document.getElementById('runSent').addEventListener('click', async () => {
+document.getElementById('runSent')?.addEventListener('click', async () => {
   const provider = document.getElementById('sentProvider').value;
   const text = document.getElementById('sentText').value;
   const symbol = document.getElementById('sentSymbol').value;
@@ -188,11 +318,12 @@ document.getElementById('runSent').addEventListener('click', async () => {
   const type = document.getElementById('sentType').value;
   const body = { provider, text, symbol, from, type };
   const res = await jsonFetch('/api/sentiment/analyze', { method: 'POST', body: JSON.stringify(body) });
-  document.getElementById('sentOut').textContent = JSON.stringify(res, null, 2);
+  const out = document.getElementById('sentOut');
+  if (out) out.textContent = JSON.stringify(res, null, 2);
 });
 
 /* Calendar */
-document.getElementById('loadCal').addEventListener('click', async () => {
+document.getElementById('loadCal')?.addEventListener('click', async () => {
   const country = document.getElementById('calCountry').value;
   const start = document.getElementById('calStart').value;
   const end = document.getElementById('calEnd').value;
@@ -202,6 +333,7 @@ document.getElementById('loadCal').addEventListener('click', async () => {
   if (end) params.set('end', end);
   const res = await jsonFetch('/api/calendar/tradingeconomics' + (params.toString() ? `?${params.toString()}` : ''));
   const list = document.getElementById('calList');
+  if (!list) return;
   list.innerHTML = '';
   (res || []).slice(0, 200).forEach(ev => {
     const row = document.createElement('div');
@@ -220,6 +352,7 @@ document.getElementById('loadCal').addEventListener('click', async () => {
 /* AI Chat */
 function appendChat(role, content) {
   const box = document.getElementById('chatBox');
+  if (!box) return;
   const wrap = document.createElement('div');
   wrap.className = `max-w-[80%] ${role === 'user' ? 'ml-auto' : ''}`;
   wrap.innerHTML = `
@@ -229,7 +362,7 @@ function appendChat(role, content) {
   box.scrollTop = box.scrollHeight;
 }
 
-document.getElementById('chatSend').addEventListener('click', async () => {
+document.getElementById('chatSend')?.addEventListener('click', async () => {
   const input = document.getElementById('chatInput');
   const content = input.value.trim();
   if (!content) return;
@@ -255,5 +388,8 @@ document.getElementById('chatSend').addEventListener('click', async () => {
   refreshSummary();
   loadAccounts();
   loadTransactions();
-  loadTradingView(document.getElementById('tvSymbol').value);
+  loadCategories();
+  initBudgetMonth();
+  loadBudgetReport();
+  loadTradingView(document.getElementById('tvSymbol')?.value);
 })();

@@ -2,6 +2,7 @@
 
 A modern dashboard with:
 - Dompet (Wallet): accounts, transactions, holdings, net worth
+- Budgets & Categories: monthly budget per category with progress and overspending alerts
 - Sentiment: VADER (free), Google Cloud Natural Language, FinBERT (HuggingFace), Finnhub Social/News
 - Economic Calendar: TradingEconomics (guest and key support), Alpha Vantage macro indicators
 - Trading: Embedded TradingView chart
@@ -31,7 +32,7 @@ This is a single Node.js app serving an SPA UI with Tailwind, Chart.js and Tradi
 - TRADINGECONOMICS_CLIENT=yourUser
 - TRADINGECONOMICS_SECRET=yourPass
 - ALPHA_VANTAGE_API_KEY=...
-- N8N_WEBHOOK_URL=https://your-n8n-host/webhook/your-id  # optional
+- N8N_WEBHOOK_URL=https://your-n8n-host/webhook/your-id  # optional (for overspending alerts)
 
 Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Set OPENAI_MODEL to the latest model you prefer.
 
@@ -45,6 +46,7 @@ Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Se
   - Create accounts and transactions
   - Doughnut chart shows balance distribution
   - Summary bar shows cash, invested, net worth
+  - Budget panel: select month, manage categories and budgets, see progress bars and overspending list
 
 - Trading
   - TradingView chart widget
@@ -79,6 +81,20 @@ Wallet
 - GET /api/wallet/holdings
 - POST /api/wallet/holdings { symbol, quantity, avgPrice }
 
+Categories & Budgets
+- GET /api/categories
+- POST /api/categories { name, type }
+- PATCH /api/categories/:id
+- DELETE /api/categories/:id
+
+- GET /api/budgets?month=YYYY-MM
+- POST /api/budgets { categoryId, month: 'YYYY-MM', amount }
+- PATCH /api/budgets/:id
+- DELETE /api/budgets/:id
+
+- GET /api/reports/budget?month=YYYY-MM  -> { month, items: [{ categoryId, categoryName, budget, spent, remaining, percent }] }
+- GET /api/budget/overspend?month=YYYY-MM -> overspending items
+
 Sentiment
 - POST /api/sentiment/analyze
   - body: { provider: 'vader'|'google'|'finbert'|'finnhub', text?, symbol?, from?, type? }
@@ -94,6 +110,7 @@ AI Chat
 n8n
 - POST /webhooks/n8n (receive)  -> appends JSON lines to data/hooks.log
 - POST /n8n/forward { url?, data } -> forwards JSON to an n8n webhook (uses N8N_WEBHOOK_URL if url omitted)
+- Automatic overspending alert: when a new expense pushes a category above its monthly budget, the server sends a JSON payload to N8N_WEBHOOK_URL (if set)
 
 ## Notes
 
