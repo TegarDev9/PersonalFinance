@@ -36,6 +36,7 @@ document.getElementById('sidebar').addEventListener('click', (e) => {
     loadCategories();
     initBudgetMonth();
     loadBudgetReport();
+    loadN8nLogs();
   }
 });
 
@@ -975,13 +976,23 @@ function buildTxQuery(limit = 1000) {
   const cat = document.getElementById('expCategory')?.value || '';
   const start = document.getElementById('expStartMonth')?.value || '';
   const end = document.getElementById('expEndMonth')?.value || '';
+  const startDate = document.getElementById('expStartDate')?.value || '';
+  const endDate = document.getElementById('expEndDate')?.value || '';
+  const txType = document.getElementById('expType')?.value || '';
+  const minAmt = document.getElementById('expMinAmount')?.value || '';
+  const maxAmt = document.getElementById('expMaxAmount')?.value || '';
   if (acc) params.set('accountId', acc);
   if (cat) params.set('category', cat);
+  if (txType) params.set('type', txType);
   if (month) params.set('month', month);
   if (!month && (start || end)) {
     if (start) params.set('startMonth', start);
     if (end) params.set('endMonth', end);
   }
+  if (startDate) params.set('startDate', startDate);
+  if (endDate) params.set('endDate', endDate);
+  if (minAmt !== '') params.set('minAmount', minAmt);
+  if (maxAmt !== '') params.set('maxAmount', maxAmt);
   params.set('limit', String(limit));
   return params.toString();
 }
@@ -1034,6 +1045,130 @@ document.getElementById('expZipBtn')?.addEventListener('click', () => {
   params.set('format', fmt);
   params.set('mode', mode);
   window.open(`/api/export/bulk.zip?${params.toString()}`, '_blank');
+});
+
+/* n8n Logs */
+state.n8nLogs = state.n8nLogs || { items: [], total: 0, offset: 0, limit: 50, es: null, retries: 0 };
+
+function getLogsToken() {
+  const inp = document.getElementById('n8nLogsToken');
+  const val = inp?.value || '';
+  return val.trim();
+}
+
+function setN8nLiveStatus(text, cls = 'text-slate-500') {
+  const el = document.getElementById('n8nLogsLiveStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `text-xs ml-2 ${cls}`;
+}
+
+function renderN8nLogs() {
+  const list = document.getElementById('n8nLogsList');
+  const totalEl = document.getElementById('n8nLogsTotal');
+  if (totalEl) totalEl.textContent = String(state.n8nLogs.total || 0);
+  if (!list) return;
+  list.innerHTML = '';
+  (state.n8nLogs.items || []).forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'p-2 border border-slate-200 rounded-lg bg-slate-50';
+    const at = item.at || '';
+    const body = item.body !== undefined ? item.body : (item.raw !== undefined ? item.raw : item);
+    row.innerHTML = `
+      <div class="text-xs text-slate-500">${at}</div>
+      <pre class="text-xs overflow-auto">${typeof body === 'string' ? body : JSON.stringify(body, null, 2)}</pre>
+    `;
+    list.appendChild(row);
+  });
+}
+
+async function loadN8nLogs() {
+  try {
+    const inp = document.getElementById('n8nLogsLimit');
+    if (inp) {
+      const lim = Number(inp.value || 50);
+      state.n8nLogs.limit = Math.max(1, Math.min(500, lim || 50));
+    }
+    const params = new URLSearchParams({ limit: String(state.n8nLogs.limit), offset: String(state.n8nLogs.offset) });
+    const tok = getLogsToken();
+    if (tok) params.set('token', tok);
+    const res = await jsonFetch(`/webhooks/n8n/logs?${params.toString()}`);
+    if (res && !res.error) {
+      state.n8nLogs.total = res.total || 0;
+      state.n8nLogs.items = res.items || [];
+      renderN8nLogs();
+    }
+  } catch {}
+}
+
+document.getElementById('n8nLogsToken')?.addEventListener('change', (e) => {
+  try { localStorage.setItem('logsToken', e.target.value || ''); } catch {}
+});
+document.getElementById('n8nLogsRefresh')?.addEventListener('click', () => {
+  state.n8nLogs.offset = 0;
+  loadN8nLogs();
+});
+document.getElementById('n8nLogsPrev')?.addEventListener('click', () => {
+  state.n8nLogs.offset = state.n8nLogs.offset + state.n8nLogs.limit;
+  loadN8nLogs();
+});
+document.getElementById('n8nLogsNext')?.addEventListener('click', () => {
+  state.n8nLogs.offset = Math.max(0, state.n8nLogs.offset - state.n8nLogs.limit);
+  loadN8nLogs();
+});
+document.getElementById('n8nLogsClear')?.addEventListener('click', async () => {
+  if (!confirm('Clear all n8n logs?')) return;
+  const tok = getLogsToken();
+  const url = '/webhooks/n8n/logs/clear' + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+  await jsonFetch(url, { method: 'POST', body: '{}' });
+  state.n8nLogs.offset = 0;
+  await loadN8nLogs();
+});
+document.getElementById('n8nLogsDownload')?.addEventListener('click', () => {
+  const tok = getLogsToken();
+  const params = new URLSearchParams({
+    limit: String(state.n8nLogs.limit || 1000),
+    offset: String(state.n8nLogs.offset || 0)
+  });
+  if (tok) params.set('token', tok);
+  window.open(`/webhooks/n8n/logs.jsonl?${params.toString()}`, '_blank');
+});
+
+document.getElementById('n8nLogsLiveBtn')?.addEventListener('click', () => {
+  const btn = document.getElementById('n8nLogsLiveBtn');
+  if (!state.n8nLogs.es) {
+    try {
+      state.n8nLogs.retries = 0;
+      setN8nLiveStatus('Connecting...', 'text-slate-500');
+      const tok = getLogsToken();
+      const url = '/webhooks/n8n/logs/stream' + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+      state.n8nLogs.es = new EventSource(url);
+      state.n8nLogs.es.onopen = () => {
+        state.n8nLogs.retries = 0;
+        setN8nLiveStatus('Connected', 'text-green-600');
+      };
+      state.n8nLogs.es.onmessage = (ev) => {
+        let obj;
+        try { obj = JSON.parse(ev.data); } catch { obj = { raw: ev.data }; }
+        state.n8nLogs.items = [obj, ...(state.n8nLogs.items || [])].slice(0, 200);
+        renderN8nLogs();
+      };
+      state.n8nLogs.es.onerror = () => {
+        state.n8nLogs.retries += 1;
+        setN8nLiveStatus(`Reconnecting... (attempt ${state.n8nLogs.retries})`, 'text-amber-600');
+        // Browser auto-retries; we keep listening.
+      };
+      if (btn) btn.textContent = 'Stop Live';
+    } catch {
+      if (btn) btn.textContent = 'Start Live';
+      setN8nLiveStatus('Error starting live stream', 'text-red-600');
+    }
+  } else {
+    try { state.n8nLogs.es.close(); } catch {}
+    state.n8nLogs.es = null;
+    setN8nLiveStatus('Stopped', 'text-slate-500');
+    if (btn) btn.textContent = 'Start Live';
+  }
 });
 
 /* TradingView */
@@ -1143,6 +1278,11 @@ document.getElementById('chatSend')?.addEventListener('click', async () => {
     if (Array.isArray(r)) state.redoStack = r;
     updateUndoBar();
   } catch {}
+  try {
+    const tok = localStorage.getItem('logsToken') || '';
+    const inp = document.getElementById('n8nLogsToken');
+    if (inp) inp.value = tok;
+  } catch {}
   show('wallet');
   refreshSummary();
   loadAccounts();
@@ -1150,5 +1290,6 @@ document.getElementById('chatSend')?.addEventListener('click', async () => {
   loadCategories();
   initBudgetMonth();
   loadBudgetReport();
+  loadN8nLogs();
   loadTradingView(document.getElementById('tvSymbol')?.value);
-})();
+_code})new(</);)();

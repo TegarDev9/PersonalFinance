@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "validate": "node scripts/validate.js",
+    "test": "node scripts/test_filters.js && node scripts/test_validation_smoke.js && npm run validate"
   },
   "keywords": [],
   "author": "",

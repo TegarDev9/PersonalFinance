@@ -14,21 +14,6 @@ A modern dashboard with:
 
 This is a single Node.js app serving an SPA UI with Tailwind, Chart.js and TradingView.
 
-## What's new in this update
-
-- Rules UI builder:
-  - Account selector as a multi-select (choose multiple local accounts to scope a rule)
-  - Live regex tester (pattern + flags + test text) to validate your regex instantly
-- OFX import account mapping:
-  - Map OFX ACCTID to your local accounts, stored in server settings
-  - UI lists detected OFX accounts on upload; map once and reuse
-- Export enhancements:
-  - Preview export: filter and preview transactions in-table before downloading
-  - Bulk export as ZIP: group by month or by category and export CSV/QIF/OFX multiple files in one ZIP
-- Deployability:
-  - Vercel: included /api serverless wrapper and vercel.json rewrite
-  - Deno: deno.jsonc task to run with Node-compat locally (note: Deploy’s filesystem is ephemeral)
-
 ## Quick start
 
 1) Install dependencies
@@ -52,6 +37,12 @@ This is a single Node.js app serving an SPA UI with Tailwind, Chart.js and Tradi
 - ALPHA_VANTAGE_API_KEY=...
 - N8N_WEBHOOK_URL=https://your-n8n-host/webhook/your-id  # optional (for overspending alerts)
 
+Optional: persistence for serverless (Vercel KV / Upstash)
+- KV_REST_API_URL=...
+- KV_REST_API_TOKEN=...
+- KV_DB_KEY=fin:db             # optional, default fin:db
+  (or use UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN)
+
 Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Set OPENAI_MODEL to the latest model you prefer.
 
 3) Run
@@ -70,9 +61,8 @@ Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Se
     - Summary totals: total budget, total spent, remaining, % used
     - Overspending list
   - Categories panel: add, inline edit and delete category
-  - Rules panel:
-    - Add rules with keywords, amount range, accounts (multi-select), regex + flags, priority
-    - Live regex test box shows Match/No match
+  - Rules panel: define custom keyword rules to auto-categorize
+  - n8n Logs panel: view paginated logs with Refresh/Prev/Next and Start Live (SSE) button
 
 - Trading
   - TradingView chart widget
@@ -94,17 +84,6 @@ Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Se
   - Provider dropdown: OpenAI, Anthropic, Gemini, Deepseek, Qwen
   - Model box optional — leave blank to use defaults
 
-- Import
-  - CSV/OFX/QIF import
-  - Auto-categorize toggle
-  - Column mapping for date, type, amount, etc.
-  - OFX account mapping UI (map ACCTID ➜ local account)
-
-- Export
-  - Single-file export: CSV/QIF/OFX with filters
-  - Preview table with Account/Month/Category filters
-  - Bulk ZIP export grouped by Month or by Category (CSV/QIF/OFX)
-
 ## REST Endpoints
 
 Wallet
@@ -113,7 +92,7 @@ Wallet
 - POST /api/wallet/accounts { name, type, balance }
 - PATCH /api/wallet/accounts/:id
 - DELETE /api/wallet/accounts/:id
-- GET /api/wallet/transactions?accountId=&month=&startMonth=&endMonth=&category=&limit=
+- GET /api/wallet/transactions?accountId=&month=&startMonth=&endMonth=&startDate=&endDate=&category=&type=&minAmount=&maxAmount=&limit=
 - POST /api/wallet/transactions { date, accountId, type, category, amount, note }
 - GET /api/wallet/holdings
 - POST /api/wallet/holdings { symbol, quantity, avgPrice }
@@ -136,35 +115,39 @@ Categories & Budgets
 
 Rules (auto-categorization)
 - GET /api/rules
-- POST /api/rules
-  - body: {
-      name,
-      keywords?: string|array,
-      categoryId,
-      type?: 'expense'|'income'|'transfer',
-      priority?: number,
-      amountMin?: number,
-      amountMax?: number,
-      accounts?: string|array,   # account IDs or names (comma separated allowed)
-      regex?: string,            # JS regex pattern
-      regexFlags?: string        # e.g., 'i'
-    }
-- PATCH /api/rules/:id   # accepts same fields as POST for updates
+- POST /api/rules { name, keywords: string|array, categoryId, type?, priority?, amountMin?, amountMax?, accounts?: string|array, regex?, regexFlags? }
+- PATCH /api/rules/:id
 - DELETE /api/rules/:id
 
 Import
 - POST /api/import/transactions
   - body: { records: Array<Object>, mapping?: { date, account, accountId?, type, amount, category, note, description }, autoCategorize?: boolean }
-  - Supports CSV/OFX/QIF (CSV parsed in browser, OFX/QIF parsed in browser to records, then posted here). OFX multi-statement is supported (account detected from each STMTRS).
-- Settings (OFX mapping):
-  - GET /api/settings/ofx-map -> { map, accounts }
-  - POST /api/settings/ofx-map { map: { [ofxAcctId]: accountId } }
+  - Supports CSV/OFX/QIF (CSV parsed in browser, OFX/QIF parsed in browser to records, then posted here)
 
 Export
-- GET /api/export/transactions.csv?month=YYYY-MM&accountId=ACC_ID&category=...
-- GET /api/export/transactions.qif?month=YYYY-MM&accountId=ACC_ID&category=...
-- GET /api/export/transactions.ofx?month=YYYY-MM&accountId=ACC_ID&category=...
-- GET /api/export/bulk.zip?mode=month|category&format=csv|qif|ofx&accountId=&month=&startMonth=&endMonth=&category=
+- GET /api/export/transactions.csv (same query filters as /transactions)
+- GET /api/export/transactions.qif
+- GET /api/export/transactions.ofx
+- GET /api/export/bulk.zip?mode=month|day|category|account|account_day|account_month|account_month_category|type_month|type_account_month|category_month|category_account_month&format=csv|qif|ofx&...filters
+  - Group by:
+    - Month (YYYY-MM)
+    - Day (YYYY-MM-DD)
+    - Category
+    - Category / Month (nested)
+    - Category / Account / Month (nested)
+    - Account
+    - Account + Day (per-account daily files)
+    - Account + Month (per-account monthly files)
+    - Account / Month / Category (nested folders)
+    - Type / Month (nested)
+    - Type / Account / Month (nested)
+  - File names include grouping context, e.g.:
+    - 2025-01.csv, 2025-01-10.csv
+    - Cash-2025-01-10.csv, Cash-2025-01.csv
+    - Cash/2025-01/Food_&_Dining.csv
+    - expense/2025-01.csv, expense/Cash/2025-01.csv
+    - Food_&_Dining/2025-01.csv, Food_&_Dining/Cash/2025-01.csv
+  - Additional filters supported: minAmount, maxAmount, startDate/endDate (YYYY-MM-DD), type=income|expense|transfer
 
 Sentiment
 - POST /api/sentiment/analyze
@@ -176,38 +159,64 @@ Calendar / Macro
 
 AI Chat
 - POST /api/ai/chat
-  - body: { provider, model?, messages: [{role, content}] }  // OpenAI-style messages
+  - body: { provider, model?, messages: [{role, content}] }
 
 n8n
-- POST /webhooks/n8n (receive)  -> appends JSON lines to data/hooks.log
+- POST /webhooks/n8n (receive) -> persists JSON-line logs:
+  - If KV (Vercel/Upstash) configured: RPUSH to KV list key (KV_HOOKS_KEY, default fin:hooks)
+  - If Deno KV available: set entries under ['fin','hooks', <timestamp_random>]
+  - Else: append to local file data/hooks.log
+- GET /webhooks/n8n/logs?limit=50&offset=0 -> returns { total, items[] } newest-first (KV/Deno KV/File)
+- GET /webhooks/n8n/logs.jsonl?limit=1000&offset=0 -> downloads NDJSON (JSON Lines), newest-first
+- GET /webhooks/n8n/logs/stream -> Server-Sent Events (SSE) stream for live logs (sends last 10 on connect, then new entries). UI shows Connected/Reconnecting with attempt count.
+- POST /webhooks/n8n/logs/clear (also DELETE /webhooks/n8n/logs) -> clears stored logs
 - POST /n8n/forward { url?, data } -> forwards JSON to an n8n webhook (uses N8N_WEBHOOK_URL if url omitted)
 - Automatic overspending alert: when a new expense pushes a category above its monthly budget, the server sends a JSON payload to N8N_WEBHOOK_URL (if set)
 
-## Deploy
+## Persistence in serverless (Vercel KV / Upstash / Deno KV)
 
-- Vercel
-  - Files added: api/index.js (serverless handler), vercel.json (rewrite all traffic to /api/index.js)
-  - Steps:
-    1. vercel login
-    2. vercel deploy
-  - Note: Vercel filesystem is ephemeral; file-based DB (data/db.json) won't persist across invocations. For persistence, use a managed KV (e.g., Vercel KV/Upstash) and adapt readDB/writeDB accordingly.
+Options:
+- Vercel KV: set KV_REST_API_URL and KV_REST_API_TOKEN (and optionally KV_DB_KEY)
+- Upstash: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (and optionally KV_DB_KEY)
+- Deno KV (Deno Deploy / local Deno): auto-detected at runtime (no env needed). The app will use Deno.openKv() when available.
 
-- Deno
-  - Local run with Node-compat: deno task start
-    - deno.jsonc contains: { \"tasks\": { \"start\": \"deno run --compat -A index.js\" } }
-  - Deno Deploy has an ephemeral filesystem; to persist data, use Deno KV or another external store and adapt readDB/writeDB.
+When a KV provider is active, the app stores the entire db.json content in a single KV key (default fin:db).
+
+## Validation script
+
+Run quick data checks:
+- npm run validate
+
+Checks include:
+- Duplicate budgets for the same category/month
+- Budgets referencing missing categories
+- Rules with invalid regex or missing category
+- Orphaned accounts in transactions
+- Type/sign mismatches (expense with amount > 0, income with amount < 0)
+- Warnings for unknown transaction categoryId, non-ISO dates, duplicate account names
+
+It will read KV if configured, otherwise data/db.json.
 
 ## Notes
 
-- FinBERT: this uses the HuggingFace Inference API for ProsusAI/finbert to avoid heavy local installs.
-- VADER is implemented with the NPM vader-sentiment package (free).
-- TextBlob is Python-only; if you need TextBlob specifically, connect it via n8n or a small Python sidecar and call it from a custom node. The VADER and FinBERT providers here cover common sentiment needs without Python.
-- TradingEconomics: if you don’t set keys, the server will default to guest:guest which is rate-limited.
+- FinBERT: uses the HuggingFace Inference API for ProsusAI/finbert.
+- VADER: NPM vader-sentiment package (free).
+- TextBlob: Python-only; integrate via n8n or a small Python sidecar if needed.
+- TradingEconomics: if you don’t set keys, defaults to guest:guest (rate-limited).
 
 ## Security
 
 - Keep your API keys in environment variables; the UI does not expose them.
 - Rate limit or protect /api routes if you plan a public deployment.
+
+Logs endpoints auth and rate limiting
+- Optional token auth for logs endpoints: set LOGS_AUTH_TOKEN in environment.
+  - Client must provide token via:
+    - Query: ?token=YOUR_TOKEN (works for SSE)
+    - Header: Authorization: Bearer YOUR_TOKEN or X-Logs-Token: YOUR_TOKEN
+  - UI provides a Token input (stored in localStorage) and adds it to requests automatically.
+- Simple rate limiting for logs endpoints (GET /webhooks/n8n/logs, /logs.jsonl, /logs/stream, POST /logs/clear):
+  - In-memory per-IP window 60 seconds, max 60 requests. Exceeding returns HTTP 429.
 
 ## License
 
