@@ -4,7 +4,9 @@ const state = {
   messages: [{ role: 'system', content: 'You are an AI assistant for finance and trading analysis.' }],
   chart: null,
   categories: [],
-  month: null
+  month: null,
+  csvRecords: [],
+  csvHeaders: []
 };
 
 function show(view) {
@@ -204,7 +206,24 @@ async function loadCategories() {
         sel.appendChild(opt);
       });
   }
+  renderCategoryList();
 }
+
+function renderCategoryList() {
+  const wrap = document.getElementById('categoryList');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+  state.categories.forEach(c => {
+    const row = document.createElement('div');
+    row.className = 'py-2';
+    row.innerHTML = `
+     < div class="flex items-center justify-between">
+       < div>
+         < div class="font-medium text-slate-800">${c.na}</mediv>
+         < div class="text-xs text-slate-500">${c.ty}</pediv>
+      </  div>
+       < div class="flex gap-2">
+         < button class="px-2 py-1 border rounded text-xs cat-edit
 
 document.getElementById('addCategoryForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();

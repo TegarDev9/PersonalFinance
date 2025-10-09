@@ -37,6 +37,14 @@ const DEFAULT_DB = {
   ]
 };
 
+const KEYWORD_MAP = {
+  'Food & Dining': ['food','restaurant','cafe','coffee','eat','warung','makan','grabfood','gofood','indomaret','alfamart'],
+  'Transport': ['uber','grab','gojek','transport','bus','train','fuel','gas','tol','parking','taxi','angkot','ojek','bensin','bbm'],
+  'Entertainment': ['netflix','disney','spotify','movie','game','cinema','hiburan','steam','psn'],
+  'Rent': ['rent','sewa','kontrakan','kos','kost','apartemen','apartment'],
+  'Salary': ['salary','gaji','payroll','income','penghasilan']
+};
+
 async function ensureDataFile() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -87,6 +95,41 @@ function findCategoryByName(db, name) {
   if (!name) return undefined;
   const n = name.toLowerCase();
   return db.categories.find(c => c.name.toLowerCase() === n);
+}
+
+function ensureCategory(db, name, type = 'expense') {
+  let c = findCategoryByName(db, name);
+  if (!c) {
+    c = { id: genId('cat'), name, type };
+    db.categories.push(c);
+  }
+  return c;
+}
+
+function autoCategorize(db, rec) {
+  // rec: { type, amount, category, note, description, merchant, payee }
+  if (rec.category) {
+    const existing = findCategoryByName(db, rec.category);
+    if (existing) return { categoryName: existing.name, categoryId: existing.id };
+  }
+  const text = [
+    rec.description, rec.note, rec.merchant, rec.payee, rec.category
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  // decide expected type
+  const expType = rec.type || ((Number(rec.amount) || 0) < 0 ? 'expense' : 'income');
+
+  // Check keywords map
+  for (const [catName, keys] of Object.entries(KEYWORD_MAP)) {
+    if (keys.some(k => text.includes(k))) {
+      const cat = ensureCategory(db, catName, expType === 'income' ? 'income' : 'expense');
+      return { categoryName: cat.name, categoryId: cat.id };
+    }
+  }
+
+  // Fallback Uncategorized
+  const unc = ensureCategory(db, 'Uncategorized', expType === 'income' ? 'income' : 'expense');
+  return { categoryName: unc.name, categoryId: unc.id };
 }
 
 function sumSpentForCategoryMonth(db, categoryId, m) {
@@ -366,6 +409,123 @@ app.get('/api/budget/overspend', async (req, res) => {
       })
       .filter(x => x.spent > x.budget);
     res.json({ month, overs });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Import transactions from parsed CSV records
+app.post('/api/import/transactions', async (req, res) => {
+  try {
+    const { records, mapping = {}, autoCategorize: doAuto = true } = req.body || {};
+    if (!Array.isArray(records) || records.length === 0) {
+      return res.status(400).json({ error: 'records[] required' });
+    }
+    const db = await readDB();
+
+    function pick(obj, names = []) {
+      for (const n of names) {
+        if (obj[n] !== undefined && obj[n] !== null && String(obj[n]).length > 0) return obj[n];
+      }
+      return undefined;
+    }
+
+    const defaults = {
+      date: mapping.date,
+      account: mapping.account || mapping.accountName,
+      accountId: mapping.accountId,
+      type: mapping.type,
+      amount: mapping.amount,
+      category: mapping.category,
+      note: mapping.note,
+      description: mapping.description
+    };
+
+    let imported = 0;
+    let createdAccounts = 0;
+    let autoCatzd = 0;
+    const sample = [];
+
+    for (const row of records) {
+      // Try to match columns
+      const dateStr = pick(row, [defaults.date, 'date', 'Date', 'tanggal', 'Tanggal']);
+      const accountName = pick(row, [defaults.account, 'account', 'Account', 'akun', 'Akun']);
+      const accountId = pick(row, [defaults.accountId, 'accountId', 'AccountId']);
+      const typeRaw = (pick(row, [defaults.type, 'type', 'Type']) || '').toString().toLowerCase();
+      let amountRaw = pick(row, [defaults.amount, 'amount', 'Amount', 'nominal', 'Nominal', 'value', 'Value']);
+      const categoryRaw = pick(row, [defaults.category, 'category', 'Category', 'kategori', 'Kategori']);
+      const noteRaw = pick(row, [defaults.note, 'note', 'Note', 'catatan', 'Catatan']);
+      const descriptionRaw = pick(row, [defaults.description, 'description', 'Description', 'desc', 'Desc', 'merchant', 'Merchant', 'payee', 'Payee']);
+
+      if (!dateStr) continue;
+
+      // Parse amount
+      let amt = 0;
+      if (typeof amountRaw === 'number') {
+        amt = amountRaw;
+      } else if (typeof amountRaw === 'string') {
+        amt = parseFloat(amountRaw.replace(/[^0-9\-.,]/g, '').replace(',', '.'));
+      } else {
+        amt = 0;
+      }
+      if (!Number.isFinite(amt)) amt = 0;
+
+      // Determine type
+      let type = typeRaw;
+      if (!type) {
+        type = amt < 0 ? 'expense' : 'income';
+      } else if (type.startsWith('exp')) type = 'expense';
+      else if (type.startsWith('inc')) type = 'income';
+      else if (type.startsWith('tran')) type = 'transfer';
+
+      // Account
+      let accId = accountId;
+      if (!accId) {
+        let acc = db.accounts.find(a => a.name.toLowerCase() === String(accountName || 'Cash').toLowerCase());
+        if (!acc) {
+          acc = { id: genId('acc'), name: accountName || 'Imported', type: 'cash', balance: 0 };
+          db.accounts.push(acc);
+          createdAccounts++;
+        }
+        accId = acc.id;
+      }
+
+      // Category
+      let categoryName = categoryRaw || '';
+      let categoryId = undefined;
+      if (!categoryName && doAuto) {
+        const auto = autoCategorize(db, { type, amount: amt, category: categoryRaw, note: noteRaw, description: descriptionRaw });
+        categoryName = auto.categoryName;
+        categoryId = auto.categoryId;
+        autoCatzd++;
+      } else if (categoryName) {
+        const c = findCategoryByName(db, categoryName);
+        if (c) categoryId = c.id;
+      }
+
+      // Build transaction
+      const tx = {
+        id: genId('tx'),
+        date: String(dateStr).slice(0, 10),
+        accountId: accId,
+        type,
+        category: categoryName || '',
+        categoryId,
+        amount: Number(amt),
+        note: noteRaw || descriptionRaw || ''
+      };
+      db.transactions.push(tx);
+
+      // Update balance
+      const account = db.accounts.find(a => a.id === accId);
+      if (account) account.balance = Number(account.balance || 0) + Number(amt);
+
+      if (sample.length < 5) sample.push(tx);
+      imported++;
+    }
+
+    await writeDB(db);
+    res.json({ imported, createdAccounts, autoCategorized: autoCatzd, sample });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

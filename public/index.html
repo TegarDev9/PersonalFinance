@@ -29,6 +29,7 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://s3.tradingview.com/tv.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   </head>
   <body class="h-full">
     <div class="h-screen flex">
@@ -133,10 +134,11 @@
           </div>
 
           <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
-            <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center justify-between mb-1">
               <div class="font-semibold text-slate-800">Budgets</div>
               <input id="budMonth" type="month" class="border rounded-lg px-3 py-1.5" />
             </div>
+            <div id="budgetSummary" class="text-sm text-slate-600 mb-3"></div>
 
             <div class="grid md:grid-cols-3 gap-6">
               <div class="space-y-3">
@@ -150,6 +152,7 @@
                   </select>
                   <button class="w-full bg-slate-800 text-white rounded-lg px-3 py-2">Add Category</button>
                 </form>
+                <div id="categoryList" class="divide-y divide-slate-100"></div>
               </div>
 
               <div class="space-y-3">
@@ -168,6 +171,45 @@
 
             <div class="mt-6 grid gap-3" id="budgetList"></div>
             <div class="mt-4" id="overspendList"></div>
+          </div>
+
+          <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
+            <div class="font-semibold text-slate-800 mb-3">Import CSV (Transactions)</div>
+            <div class="grid md:grid-cols-3 gap-4">
+              <div class="space-y-2">
+                <input type="file" id="csvFile" accept=".csv,text/csv" class="w-full border rounded-lg px-3 py-2" />
+                <label class="inline-flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" id="csvAutoCategorize" checked />
+                  Auto-categorize
+                </label>
+              </div>
+              <div class="space-y-2">
+                <div class="grid grid-cols-2 gap-2">
+                  <label class="text-xs text-slate-600">Date</label>
+                  <select id="mapDate" class="border rounded px-2 py-1 text-sm"></select>
+                  <label class="text-xs text-slate-600">Account</label>
+                  <select id="mapAccount" class="border rounded px-2 py-1 text-sm"></select>
+                  <label class="text-xs text-slate-600">Type</label>
+                  <select id="mapType" class="border rounded px-2 py-1 text-sm"></select>
+                  <label class="text-xs text-slate-600">Amount</label>
+                  <select id="mapAmount" class="border rounded px-2 py-1 text-sm"></select>
+                  <label class="text-xs text-slate-600">Category</label>
+                  <select id="mapCategory" class="border rounded px-2 py-1 text-sm"></select>
+                  <label class="text-xs text-slate-600">Note</label>
+                  <select id="mapNote" class="border rounded px-2 py-1 text-sm"></select>
+                  <label class="text-xs text-slate-600">Description</label>
+                  <select id="mapDescription" class="border rounded px-2 py-1 text-sm"></select>
+                </div>
+                <div class="flex gap-2">
+                  <button id="csvPreviewBtn" class="bg-slate-700 text-white rounded-lg px-3 py-2 text-sm">Preview</button>
+                  <button id="csvImportBtn" class="bg-brand-600 text-white rounded-lg px-3 py-2 text-sm">Import</button>
+                </div>
+              </div>
+              <pre id="csvPreview" class="bg-slate-900 text-slate-100 p-3 rounded-lg text-xs overflow-auto md:col-span-1"></pre>
+            </div>
+            <div class="text-xs text-slate-500 mt-2">
+              Tip: If mapping is empty, we try to auto-detect common column names like date, amount, description, category, account, type.
+            </div>
           </div>
 
         </section>
