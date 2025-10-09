@@ -1,13 +1,16 @@
 {
   "version": 2,
   "builds": [
-    { "src": "api/index.js", "use": "@vercel/node" }
-  ],
-  "functions": {
-    "api/index.js": {
-      "includeFiles": "{public/**,data/**,docs/**}",
-      "runtime": "nodejs20.x"
-    }
+    {
+      "src": "api/index.js",
+      "use": "@vercel/node",
+      "config": {
+        "includeFiles": [
+          "public/**",
+          "data/**",
+          "docs/**"
+        ]
+  }
   },
   "rewrites": [
     { "source": "/(.*)", "destination": "/api/index.js" }
