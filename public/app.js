@@ -1048,7 +1048,14 @@ document.getElementById('expZipBtn')?.addEventListener('click', () => {
 });
 
 /* n8n Logs */
-state.n8nLogs = state.n8nLogs || { items: [], total: 0, offset: 0, limit: 50, es: null };
+state.n8nLogs = state.n8nLogs || { items: [], total: 0, offset: 0, limit: 50, es: null, retries: 0 };
+
+function setN8nLiveStatus(text, cls = 'text-slate-500') {
+  const el = document.getElementById('n8nLogsLiveStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.className = `text-xs ml-2 ${cls}`;
+}
 
 function renderN8nLogs() {
   const list = document.getElementById('n8nLogsList');
@@ -1098,11 +1105,24 @@ document.getElementById('n8nLogsNext')?.addEventListener('click', () => {
   state.n8nLogs.offset = Math.max(0, state.n8nLogs.offset - state.n8nLogs.limit);
   loadN8nLogs();
 });
+document.getElementById('n8nLogsClear')?.addEventListener('click', async () => {
+  if (!confirm('Clear all n8n logs?')) return;
+  await jsonFetch('/webhooks/n8n/logs/clear', { method: 'POST', body: '{}' });
+  state.n8nLogs.offset = 0;
+  await loadN8nLogs();
+});
+
 document.getElementById('n8nLogsLiveBtn')?.addEventListener('click', () => {
   const btn = document.getElementById('n8nLogsLiveBtn');
   if (!state.n8nLogs.es) {
     try {
+      state.n8nLogs.retries = 0;
+      setN8nLiveStatus('Connecting...', 'text-slate-500');
       state.n8nLogs.es = new EventSource('/webhooks/n8n/logs/stream');
+      state.n8nLogs.es.onopen = () => {
+        state.n8nLogs.retries = 0;
+        setN8nLiveStatus('Connected', 'text-green-600');
+      };
       state.n8nLogs.es.onmessage = (ev) => {
         let obj;
         try { obj = JSON.parse(ev.data); } catch { obj = { raw: ev.data }; }
@@ -1110,15 +1130,19 @@ document.getElementById('n8nLogsLiveBtn')?.addEventListener('click', () => {
         renderN8nLogs();
       };
       state.n8nLogs.es.onerror = () => {
-        // keep connection attempts; browser will retry
+        state.n8nLogs.retries += 1;
+        setN8nLiveStatus(`Reconnecting... (attempt ${state.n8nLogs.retries})`, 'text-amber-600');
+        // Browser auto-retries; we keep listening.
       };
       if (btn) btn.textContent = 'Stop Live';
     } catch {
       if (btn) btn.textContent = 'Start Live';
+      setN8nLiveStatus('Error starting live stream', 'text-red-600');
     }
   } else {
     try { state.n8nLogs.es.close(); } catch {}
     state.n8nLogs.es = null;
+    setN8nLiveStatus('Stopped', 'text-slate-500');
     if (btn) btn.textContent = 'Start Live';
   }
 });

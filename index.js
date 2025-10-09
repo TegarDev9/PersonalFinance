@@ -971,6 +971,8 @@ app.get('/webhooks/n8n/logs/stream', async (req, res) => {
     res.setHeader('cache-control', 'no-cache, no-transform');
     res.setHeader('connection', 'keep-alive');
 
+    // suggest client retry (ms)
+    res.write('retry: 3000\n\n');
     res.write(': connected\n\n');
 
     let timer = null;
@@ -1064,6 +1066,53 @@ app.get('/webhooks/n8n/logs/stream', async (req, res) => {
     });
   } catch (e) {
     try { res.status(500).end(); } catch {}
+  }
+});
+
+// Clear n8n logs
+app.post('/webhooks/n8n/logs/clear', async (req, res) => {
+  try {
+    if (kvEnabled()) {
+      await kvCmd(['DEL', HOOKS_LIST_KEY]);
+      return res.json({ ok: true, backend: 'kv' });
+    }
+    if (denoKvAvailable()) {
+      const kv = await getDenoKv();
+      const ops = [];
+      for await (const entry of kv.list({ prefix: ['fin', 'hooks'] })) {
+        await kv.delete(entry.key);
+      }
+      return res.json({ ok: true, backend: 'deno_kv' });
+    }
+    await ensureDataFile();
+    const logPath = path.join(DATA_DIR, 'hooks.log');
+    await fsp.writeFile(logPath, '');
+    res.json({ ok: true, backend: 'file' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Optional DELETE for clearing logs
+app.delete('/webhooks/n8n/logs', async (req, res) => {
+  try {
+    if (kvEnabled()) {
+      await kvCmd(['DEL', HOOKS_LIST_KEY]);
+      return res.json({ ok: true, backend: 'kv' });
+    }
+    if (denoKvAvailable()) {
+      const kv = await getDenoKv();
+      for await (const entry of kv.list({ prefix: ['fin', 'hooks'] })) {
+        await kv.delete(entry.key);
+      }
+      return res.json({ ok: true, backend: 'deno_kv' });
+    }
+    await ensureDataFile();
+    const logPath = path.join(DATA_DIR, 'hooks.log');
+    await fsp.writeFile(logPath, '');
+    res.json({ ok: true, backend: 'file' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -1322,6 +1371,25 @@ app.get('/api/export/bulk.zip', async (req, res) => {
       else if (format === 'qif') content = toQIF(db, arr);
       else content = toOFX(db, arr);
       const fname = `${sanitize(accName)}-${sanitize(m)}.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else if (mode === 'account_month_category') {
+    const groups = {};
+    for (const t of txs) {
+      const acc = db.accounts.find(a => a.id === t.accountId);
+      const accName = acc ? acc.name : t.accountId || 'Account';
+      const m = monthKey(t.date);
+      const cat = t.category || (t.categoryId || 'Uncategorized');
+      const key = `${accName}/${m}/${cat}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    for (const [key, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = key.split('/').map(sanitize).join('/') + `.${format === 'csv' ? 'csv' : format}`;
       zip.file(fname, content);
     }
   } else if (mode === 'category') {

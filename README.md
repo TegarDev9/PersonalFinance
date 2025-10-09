@@ -128,7 +128,7 @@ Export
 - GET /api/export/transactions.csv (same query filters as /transactions)
 - GET /api/export/transactions.qif
 - GET /api/export/transactions.ofx
-- GET /api/export/bulk.zip?mode=month|day|category|account|account_day|account_month&format=csv|qif|ofx&...filters
+- GET /api/export/bulk.zip?mode=month|day|category|account|account_day|account_month|account_month_category&format=csv|qif|ofx&...filters
   - Group by:
     - Month (YYYY-MM)
     - Day (YYYY-MM-DD)
@@ -136,7 +136,8 @@ Export
     - Account
     - Account + Day (per-account daily files)
     - Account + Month (per-account monthly files)
-  - File names include grouping context, e.g. 2025-01.csv, 2025-01-10.csv, Cash-2025-01-10.csv, Cash-2025-01.csv
+    - Account + Month + Category (nested folders)
+  - File names include grouping context, e.g. 2025-01.csv, 2025-01-10.csv, Cash-2025-01-10.csv, Cash-2025-01.csv, Cash/2025-01/Food_&_Dining.csv
   - Additional filters supported: minAmount, maxAmount, startDate/endDate (YYYY-MM-DD), type=income|expense|transfer
 
 Sentiment
