@@ -1,0 +1,12 @@
+{
+  "accounts": [
+    { "id": "acc_cash", "name": "Cash", "type": "cash", "balance": 1000 }
+  ],
+  "transactions": [
+    { "id": "tx_seed", "date": "2025-01-01", "accountId": "acc_cash", "type": "income", "category": "Seed", "amount": 1000, "note": "Initial balance" }
+  ],
+  "holdings": [
+    { "id": "hold_aapl", "symbol": "AAPL", "quantity": 5, "avgPrice": 150 }
+  ],
+  "settings": { "baseCurrency": "USD" }
+}
