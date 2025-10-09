@@ -471,6 +471,14 @@ app.post('/n8n/forward', async (req, res) => {
   }
 });
 
+// Handle favicon to avoid 404 noise
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+// SPA history fallback for non-API routes
+app.get(/^\/(?!api|webhooks|n8n).*/, (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.listen(PORT, () => {
   console.log(`Server is running on port ${PORT}`);
 });
