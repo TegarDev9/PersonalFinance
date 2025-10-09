@@ -14,6 +14,108 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Swagger UI
+try {
+  const swaggerUi = require('swagger-ui-express');
+  const openapi = require(path.join(__dirname, 'docs', 'openapi.json'));
+  app.get('/openapi.json', (req, res) => res.json(openapi));
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
+
+  // Redoc UI (with SEO meta + dark mode toggle)
+  app.get('/redoc', (req, res) => {
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.end(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FinDash API — Redoc</title>
+    <meta name="description" content="FinDash API documentation for personal finance, budgeting, exports, sentiment, and n8n automation." />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0f172a" />
+    <meta property="og:title" content="FinDash API — Redoc" />
+    <meta property="og:description" content="Modern API for finance, budgets, exports, sentiment, and n8n logs." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="${req.protocol}://${req.get('host')}/redoc" />
+    <meta name="twitter:card" content="summary" />
+    <style>
+      :root { color-scheme: light dark; }
+      body { margin: 0; padding: 0; background: #0b1220; }
+      .topbar { position: fixed; z-index: 20; top: 0; left: 0; right: 0; height: 56px; background: #0f172a; color: #fff; display:flex; align-items:center; padding: 0 16px; font: 600 14px system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial; }
+      .topbar a { color: #fff; text-decoration: none; margin-right: 16px; opacity: .9; }
+      .topbar a:hover { opacity: 1; }
+      .pad { height: 56px; }
+      #redoc-container { height: calc(100vh - 56px); }
+      .btn { background:#1d4ed8; color:#fff; border:none; padding:8px 10px; border-radius:8px; cursor:pointer; }
+      .btn:hover { background:#2563eb; }
+      .chip { font-weight:600; color:#a3e635; font-size:12px; border:1px solid #1d4ed8; padding:2px 8px; border-radius:999px; margin-left:6px; opacity:.9;}
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:24px;height:24px;background:#2563eb;border-radius:6px;display:grid;place-items:center;font:700 12px system-ui;">F</div>
+        <span>FinDash API</span>
+        <span class="chip">Redoc</span>
+      </div>
+      <div style="flex:1"></div>
+      <a href="/api-docs">Swagger UI</a>
+      <a href="/openapi.json">OpenAPI JSON</a>
+      <a href="/docs" title="Docs Home">Docs</a>
+      <button id="themeToggle" class="btn" style="margin-left:12px;">Dark</button>
+    </div>
+    <div class="pad"></div>
+    <div id="redoc-container"></div>
+    <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+    <script>
+      (function(){
+        const container = document.getElementById('redoc-container');
+        const key = 'redocTheme';
+        const getTheme = () => localStorage.getItem(key) || 'light';
+        const setTheme = (t) => localStorage.setItem(key, t);
+        const btn = document.getElementById('themeToggle');
+
+        const light = {
+          theme: {
+            colors: {
+              primary: { main: '#2563eb' }
+            },
+            typography: {
+              fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+            }
+          }
+        };
+        const dark = {
+          theme: {
+            colors: {
+              primary: { main: '#60a5fa' },
+              text: '#e5e7eb',
+              http: { get: '#22c55e', post: '#3b82f6', put: '#eab308', delete: '#ef4444' }
+            },
+            sidebar: { backgroundColor: '#0b1220' },
+            typography: {
+              fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial"
+            }
+          }
+        };
+
+        function render() {
+          container.innerHTML = '';
+          const mode = getTheme();
+          btn.textContent = mode === 'dark' ? 'Light' : 'Dark';
+          const opts = mode === 'dark' ? dark : light;
+          Redoc.init('/openapi.json', opts, container);
+        }
+        btn.addEventListener('click', () => { setTheme(getTheme() === 'dark' ? 'light' : 'dark'); render(); });
+        render();
+      })();
+    </script>
+  </body>
+</html>`);
+  });
+} catch (e) {
+  // swagger/redoc optional
+}
+
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
@@ -129,11 +231,19 @@ const KEYWORD_MAP = {
 
 async function ensureDataFile() {
   if (kvEnabled() || denoKvAvailable()) return;
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  } catch {
+    // likely read-only FS (e.g., Vercel). proceed without persisting.
   }
-  if (!fs.existsSync(DB_FILE)) {
-    await fsp.writeFile(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2));
+  try {
+    if (!fs.existsSync(DB_FILE)) {
+      await fsp.writeFile(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2));
+    }
+  } catch {
+    // read-only FS; fall back to in-memory DEFAULT_DB
   }
 }
 
@@ -191,8 +301,12 @@ async function writeDB(db) {
     const kv = await getDenoKv();
     await kv.set(['fin', 'db'], JSON.stringify(db));
   } else {
-    await ensureDataFile();
-    await fsp.writeFile(DB_FILE, JSON.stringify(db, null, 2));
+    try {
+      await ensureDataFile();
+      await fsp.writeFile(DB_FILE, JSON.stringify(db, null, 2));
+    } catch {
+      // likely read-only FS (serverless). In this mode, data won't persist.
+    }
   }
 }
 

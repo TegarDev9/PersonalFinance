@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-50 dark:bg-slate-950">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FinDash API Docs</title>
+    <meta name="description" content="Modern API for personal finance, budgeting, exports, sentiment and n8n automation." />
+    <meta name="theme-color" content="#0f172a" />
+    <meta property="og:title" content="FinDash API Docs" />
+    <meta property="og:description" content="Explore Swagger, Redoc, and one-click Deploy to Vercel." />
+    <meta property="og:type" content="website" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              brand: { 50:"#eff6ff",100:"#dbeafe",200:"#bfdbfe",300:"#93c5fd",400:"#60a5fa",500:"#3b82f6",600:"#2563eb",700:"#1d4ed8",800:"#1e40af",900:"#1e3a8a" }
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="h-full text-slate-800 dark:text-slate-200">
+    <header class="sticky top-0 z-20 bg-white/70 dark:bg-slate-900/60 backdrop-blur border-b border-slate-200 dark:border-slate-800">
+      <div class="max-w-6xl mx-auto px-5 py-3 flex items-center gap-4">
+        <a href="/" class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-brand-600 text-white grid place-items-center font-bold">F</div>
+          <span class="font-semibold">FinDash</span>
+        </a>
+        <div class="ml-auto flex items-center gap-3 text-sm">
+          <a class="hover:text-brand-700 dark:hover:text-brand-400" href="/api-docs">Swagger</a>
+          <a class="hover:text-brand-700 dark:hover:text-brand-400" href="/redoc">Redoc</a>
+          <a class="hover:text-brand-700 dark:hover:text-brand-400" href="/openapi.json">OpenAPI JSON</a>
+          <button id="docsDarkToggle" class="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs">Dark</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-5 py-8 space-y-10">
+      <section class="grid md:grid-cols-2 gap-6 items-center">
+        <div class="space-y-4">
+          <h1 class="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white">FinDash API Documentation</h1>
+          <p class="text-slate-600 dark:text-slate-300 leading-relaxed">
+            Modern API for personal finance, trading sentiment, automation (n8n), and AI integrations.
+            Explore interactive docs via Swagger or Redoc, and use the OpenAPI spec in your favorite client.
+          </p>
+          <div class="flex flex-wrap gap-3">
+            <a href="/api-docs" class="inline-flex items-center px-4 py-2 rounded-lg bg-brand-600 text-white">Open Swagger</a>
+            <a href="/redoc" class="inline-flex items-center px-4 py-2 rounded-lg border border-brand-600 text-brand-700 dark:text-brand-300">Open Redoc</a>
+            <a href="/openapi.json" class="inline-flex items-center px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700">OpenAPI JSON</a>
+          </div>
+        </div>
+        <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm p-4">
+          <pre class="text-xs text-slate-800 dark:text-slate-200 overflow-auto"><code>curl -s https://your-app.vercel.app/api/wallet/summary | jq
+
+# Add a transaction (requires persistence configured)
+curl -X POST https://your-app.vercel.app/api/wallet/transactions \
+  -H 'content-type: application/json' \
+  -d '{
+    "date":"2025-01-12",
+    "accountId":"acc_cash",
+    "type":"expense",
+    "category":"Food & Dining",
+    "amount":-12.5,
+    "note":"Lunch"
+  }'</code></pre>
+        </div>
+      </section>
+
+      <section class="p-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-semibold text-slate-800 dark:text-slate-100">One‑click Deploy to Vercel</h3>
+          <a id="vercelBtn" target="_blank" rel="noopener" class="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-black text-white">
+            <svg width="16" height="16" viewBox="0 0 76 65" fill="none"><path d="M38 0l38 65H0L38 0z" fill="#fff"/></svg>
+            <span>Deploy with Vercel</span>
+          </a>
+        </div>
+        <div class="grid md:grid-cols-3 gap-3 items-end">
+          <div>
+            <label class="text-xs text-slate-600 dark:text-slate-400">Repository URL (GitHub/GitLab/Bitbucket)</label>
+            <input id="repoUrl" placeholder="https://github.com/your/repo" class="w-full border rounded-lg px-3 py-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950" />
+          </div>
+          <div>
+            <label class="text-xs text-slate-600 dark:text-slate-400">Project Name</label>
+            <input id="projName" value="FinDash" class="w-full border rounded-lg px-3 py-2 border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950" />
+          </div>
+          <div class="flex gap-2">
+            <button id="genVercel" class="px-4 py-2 rounded-lg bg-brand-600 text-white">Generate Link</button>
+            <button id="copyVercel" class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700">Copy Link</button>
+          </div>
+        </div>
+        <p class="text-xs text-slate-600 dark:text-slate-400 mt-2">We’ll prefill required env names (KV_REST_API_URL/TOKEN or Upstash), logs token, and provider keys.</p>
+      </section>
+
+      <section class="grid md:grid-cols-3 gap-6">
+        <div class="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <h3 class="font-semibold text-slate-800 dark:text-slate-100 mb-2">Wallet</h3>
+          <p class="text-sm text-slate-600 dark:text-slate-300 mb-3">Accounts, transactions, holdings, summaries.</p>
+          <ul class="text-sm list-disc ml-5 space-y-1">
+            <li>GET /api/wallet/summary</li>
+            <li>GET/POST /api/wallet/accounts</li>
+            <li>GET/POST /api/wallet/transactions</li>
+            <li>GET/POST /api/wallet/holdings</li>
+          </ul>
+        </div>
+        <div class="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <h3 class="font-semibold text-slate-800 dark:text-slate-100 mb-2">Budgets & Categories</h3>
+          <p class="text-sm text-slate-600 dark:text-slate-300 mb-3">Monthly budgets, inline edits, overspending alerts (n8n).</p>
+          <ul class="text-sm list-disc ml-5 space-y-1">
+            <li>GET/POST/PATCH/DELETE /api/categories</li>
+            <li>GET/POST/PATCH/DELETE /api/budgets</li>
+            <li>GET /api/reports/budget</li>
+            <li>GET /api/budget/overspend</li>
+          </ul>
+        </div>
+        <div class="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <h3 class="font-semibold text-slate-800 dark:text-slate-100 mb-2">Automation & Exports</h3>
+          <p class="text-sm text-slate-600 dark:text-slate-300 mb-3">n8n webhooks, logs streaming, CSV/QIF/OFX exports, ZIP bulk.</p>
+          <ul class="text-sm list-disc ml-5 space-y-1">
+            <li>POST /webhooks/n8n</li>
+            <li>GET /webhooks/n8n/logs(.jsonl|/stream)</li>
+            <li>GET /api/export/transactions.(csv|qif|ofx)</li>
+            <li>GET /api/export/bulk.zip</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="grid md:grid-cols-2 gap-6">
+        <div class="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <h3 class="font-semibold text-slate-800 dark:text-slate-100 mb-2">Getting Started</h3>
+          <ol class="list-decimal ml-5 text-sm text-slate-700 dark:text-slate-300 space-y-1">
+            <li>Set environment variables (keys for providers, optional LOGS_AUTH_TOKEN).</li>
+            <li>For persistence on Vercel, configure Vercel KV or Upstash Redis REST.</li>
+            <li>Use Swagger/Redoc to explore endpoints and run requests.</li>
+          </ol>
+        </div>
+        <div class="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+          <h3 class="font-semibold text-slate-800 dark:text-slate-100 mb-2">Auth & Rate Limits</h3>
+          <p class="text-sm text-slate-700 dark:text-slate-300">
+            Logs endpoints can be protected by token via query (?token=), header (X-Logs-Token) atau Authorization: Bearer.
+            Rate limit default 60 requests / 60s per IP untuk endpoint logs.
+          </p>
+        </div>
+      </section>
+
+      <section class="p-5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 shadow-sm">
+        <h3 class="font-semibold text-slate-800 dark:text-slate-100 mb-2">Persistence (Serverless)</h3>
+        <p class="text-sm text-slate-700 dark:text-slate-300 mb-2">
+          File system pada Vercel bersifat read-only dan ephemeral. Aktifkan KV agar data persisten:
+        </p>
+        <ul class="list-disc ml-5 text-sm text-slate-700 dark:text-slate-300 space-y-1">
+          <li>Vercel KV: set KV_REST_API_URL & KV_REST_API_TOKEN</li>
+          <li>Upstash Redis REST: set UPSTASH_REDIS_REST_URL & UPSTASH_REDIS_REST_TOKEN</li>
+        </ul>
+      </section>
+
+      <footer class="py-8 text-center text-xs text-slate-500 dark:text-slate-400">
+        © 2025 FinDash. Built for modern finance workflows.
+      </footer>
+    </main>
+
+    <script>
+      (function(){
+        const html = document.documentElement;
+        const k = 'docsDark';
+        function apply() {
+          const val = localStorage.getItem(k) || '0';
+          if (val === '1') html.classList.add('dark'); else html.classList.remove('dark');
+          const btn = document.getElementById('docsDarkToggle');
+          if (btn) btn.textContent = (val === '1') ? 'Light' : 'Dark';
+        }
+        document.getElementById('docsDarkToggle')?.addEventListener('click', () => {
+          const cur = localStorage.getItem(k) || '0';
+          localStorage.setItem(k, cur === '1' ? '0' : '1');
+          apply();
+        });
+        apply();
+
+        const repo = document.getElementById('repoUrl');
+        const proj = document.getElementById('projName');
+        const btn = document.getElementById('vercelBtn');
+        const gen = document.getElementById('genVercel');
+        const copy = document.getElementById('copyVercel');
+
+        function buildLink() {
+          const repoUrl = encodeURIComponent(repo.value.trim() || 'https://github.com/your/repo');
+          const projectName = encodeURIComponent(proj.value.trim() || 'FinDash');
+          const env = encodeURIComponent([
+            'KV_REST_API_URL','KV_REST_API_TOKEN',
+            'UPSTASH_REDIS_REST_URL','UPSTASH_REDIS_REST_TOKEN',
+            'LOGS_AUTH_TOKEN',
+            'OPENAI_API_KEY','ANTHROPIC_API_KEY','GEMINI_API_KEY','HUGGINGFACE_API_KEY','FINNHUB_API_KEY',
+            'TRADINGECONOMICS_CLIENT','TRADINGECONOMICS_SECRET','ALPHA_VANTAGE_API_KEY',
+            'N8N_WEBHOOK_URL'
+          ].join(','));
+          const envDescription = encodeURIComponent('Configure persistence (KV) and provider keys.');
+          const url = \`https://vercel.com/new/clone?repository-url=\${repoUrl}&project-name=\${projectName}&repository-name=\${projectName}&env=\${env}&envDescription=\${envDescription}\`;
+          return url;
+        }
+        function refreshLink() {
+          btn.href = buildLink();
+        }
+        gen?.addEventListener('click', refreshLink);
+        repo?.addEventListener('input', () => { /* debounce not needed */ });
+        proj?.addEventListener('input', () => { /* noop */ });
+        copy?.addEventListener('click', async () => {
+          const url = buildLink();
+          try { await navigator.clipboard.writeText(url); copy.textContent='Copied'; setTimeout(()=>copy.textContent='Copy Link', 1500);} catch {}
+        });
+        // initialize link
+        refreshLink();
+      })();
+    </script>
+  </body>
+</html>
