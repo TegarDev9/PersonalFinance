@@ -41,6 +41,17 @@ async function kvSet(key, val) {
   await kvCmd(['SET', key, val]);
 }
 
+// Deno KV (for Deno Deploy/local Deno)
+const denoKvAvailable = () => typeof globalThis !== 'undefined' && typeof globalThis.Deno !== 'undefined' && typeof globalThis.Deno.openKv === 'function';
+let denoKvInstance = null;
+async function getDenoKv() {
+  if (!denoKvAvailable()) return null;
+  if (!denoKvInstance) {
+    denoKvInstance = await globalThis.Deno.openKv();
+  }
+  return denoKvInstance;
+}
+
 const DEFAULT_DB = {
   accounts: [
     { id: 'acc_cash', name: 'Cash', type: 'cash', balance: 1000 }
@@ -70,7 +81,7 @@ const KEYWORD_MAP = {
 };
 
 async function ensureDataFile() {
-  if (kvEnabled()) return;
+  if (kvEnabled() || denoKvAvailable()) return;
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
@@ -285,13 +296,17 @@ app.delete('/api/wallet/accounts/:id', async (req, res) => {
 
 // Transactions
 app.get('/api/wallet/transactions', async (req, res) => {
-  const { accountId, month, startMonth, endMonth, category, minAmount, maxAmount, limit = 100 } = req.query;
+  const { accountId, month, startMonth, endMonth, startDate, endDate, category, type, minAmount, maxAmount, limit = 100 } = req.query;
   const db = await readDB();
   let tx = db.transactions.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   if (accountId) tx = tx.filter(t => t.accountId === accountId);
   if (category) {
     const catLower = String(category).toLowerCase();
     tx = tx.filter(t => (t.category || '').toLowerCase() === catLower || t.categoryId === category);
+  }
+  if (type) {
+    const typ = String(type).toLowerCase();
+    tx = tx.filter(t => String(t.type).toLowerCase() === typ);
   }
   if (month) {
     tx = tx.filter(t => monthKey(t.date) === month);
@@ -302,6 +317,12 @@ app.get('/api/wallet/transactions', async (req, res) => {
       const m = monthKey(t.date);
       return m >= start && m <= end;
     });
+  }
+  if (startDate) {
+    tx = tx.filter(t => String(t.date).slice(0,10) >= String(startDate));
+  }
+  if (endDate) {
+    tx = tx.filter(t => String(t.date).slice(0,10) <= String(endDate));
   }
   const minA = minAmount !== undefined && minAmount !== '' ? Number(minAmount) : undefined;
   const maxA = maxAmount !== undefined && maxAmount !== '' ? Number(maxAmount) : undefined;

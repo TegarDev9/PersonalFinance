@@ -975,15 +975,21 @@ function buildTxQuery(limit = 1000) {
   const cat = document.getElementById('expCategory')?.value || '';
   const start = document.getElementById('expStartMonth')?.value || '';
   const end = document.getElementById('expEndMonth')?.value || '';
+  const startDate = document.getElementById('expStartDate')?.value || '';
+  const endDate = document.getElementById('expEndDate')?.value || '';
+  const txType = document.getElementById('expType')?.value || '';
   const minAmt = document.getElementById('expMinAmount')?.value || '';
   const maxAmt = document.getElementById('expMaxAmount')?.value || '';
   if (acc) params.set('accountId', acc);
   if (cat) params.set('category', cat);
+  if (txType) params.set('type', txType);
   if (month) params.set('month', month);
   if (!month && (start || end)) {
     if (start) params.set('startMonth', start);
     if (end) params.set('endMonth', end);
   }
+  if (startDate) params.set('startDate', startDate);
+  if (endDate) params.set('endDate', endDate);
   if (minAmt !== '') params.set('minAmount', minAmt);
   if (maxAmt !== '') params.set('maxAmount', maxAmt);
   params.set('limit', String(limit));

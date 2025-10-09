@@ -91,7 +91,7 @@ Wallet
 - POST /api/wallet/accounts { name, type, balance }
 - PATCH /api/wallet/accounts/:id
 - DELETE /api/wallet/accounts/:id
-- GET /api/wallet/transactions?accountId=&month=&startMonth=&endMonth=&category=&minAmount=&maxAmount=&limit=
+- GET /api/wallet/transactions?accountId=&month=&startMonth=&endMonth=&startDate=&endDate=&category=&type=&minAmount=&maxAmount=&limit=
 - POST /api/wallet/transactions { date, accountId, type, category, amount, note }
 - GET /api/wallet/holdings
 - POST /api/wallet/holdings { symbol, quantity, avgPrice }
@@ -129,7 +129,7 @@ Export
 - GET /api/export/transactions.ofx
 - GET /api/export/bulk.zip?mode=month|category&format=csv|qif|ofx&...filters
   - File names now include account/month context, e.g. transactions-Cash-2025-01.csv
-  - Additional filters supported: minAmount, maxAmount
+  - Additional filters supported: minAmount, maxAmount, startDate/endDate (YYYY-MM-DD), type=income|expense|tran_codesfnewe</r
 
 Sentiment
 - POST /api/sentiment/analyze
@@ -148,19 +148,27 @@ n8n
 - POST /n8n/forward { url?, data } -> forwards JSON to an n8n webhook (uses N8N_WEBHOOK_URL if url omitted)
 - Automatic overspending alert: when a new expense pushes a category above its monthly budget, the server sends a JSON payload to N8N_WEBHOOK_URL (if set)
 
-## Persistence in serverless (Vercel KV / Upstash)
+## Persistence in serverless (Vercel KV / Upstash / Deno KV)
 
-Set these env vars to enable KV mode so data survives serverless cold starts:
-- KV_REST_API_URL and KV_REST_API_TOKEN (Vercel KV)
-  or UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (Upstash)
-- KV_DB_KEY (optional, default fin:db)
+Options:
+- Vercel KV: set KV_REST_API_URL and KV_REST_API_TOKEN (and optionally KV_DB_KEY)
+- Upstash: set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN (and optionally KV_DB_KEY)
+- Deno KV (Deno Deploy / local Deno): auto-detected at runtime (no env needed). The app will use Deno.openKv() when available.
 
-When KV is configured, the app stores the entire db.json JSON in a single KV key.
+When a KV provider is active, the app stores the entire db.json content in a single KV key (default fin:db).
 
 ## Validation script
 
-Run quick data checks (duplicates, missing refs, regex errors):
+Run quick data checks:
 - npm run validate
+
+Checks include:
+- Duplicate budgets for the same category/month
+- Budgets referencing missing categories
+- Rules with invalid regex or missing category
+- Orphaned accounts in transactions
+- Type/sign mismatches (expense with amount > 0, income with amount < 0)
+- Warnings for unknown transaction categoryId, non-ISO dates, duplicate account names
 
 It will read KV if configured, otherwise data/db.json.
 
