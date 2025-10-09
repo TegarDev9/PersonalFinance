@@ -17,6 +17,30 @@ app.use(express.static(path.join(__dirname, 'public')));
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 
+// Optional KV persistence (Vercel KV / Upstash)
+const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
+const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
+const KV_KEY = process.env.KV_DB_KEY || 'fin:db';
+const kvEnabled = () => !!(KV_URL && KV_TOKEN);
+async function kvCmd(cmdArr) {
+  const r = await fetch(KV_URL, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${KV_TOKEN}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify(cmdArr)
+  });
+  try { return await r.json(); } catch { return {}; }
+}
+async function kvGet(key) {
+  const data = await kvCmd(['GET', key]);
+  return data && data.result !== undefined ? data.result : null;
+}
+async function kvSet(key, val) {
+  await kvCmd(['SET', key, val]);
+}
+
 const DEFAULT_DB = {
   accounts: [
     { id: 'acc_cash', name: 'Cash', type: 'cash', balance: 1000 }
@@ -33,12 +57,8 @@ const DEFAULT_DB = {
     { id: 'cat_rent', name: 'Rent', type: 'expense' },
     { id: 'cat_salary', name: 'Salary', type: 'income' }
   ],
-  budgets: [
-    // { id: 'bud_xxx', categoryId: 'cat_food', month: '2025-01', amount: 200 }
-  ],
-  rules: [
-    // { id:'rule_x', name:'Coffee to Food', keywords:['coffee','cafe'], categoryId:'cat_food', type:'expense', priority:10 }
-  ]
+  budgets: [],
+  rules: []
 };
 
 const KEYWORD_MAP = {
@@ -50,6 +70,7 @@ const KEYWORD_MAP = {
 };
 
 async function ensureDataFile() {
+  if (kvEnabled()) return;
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
@@ -70,15 +91,33 @@ function normalizeDB(db) {
 }
 
 async function readDB() {
-  await ensureDataFile();
-  const raw = await fsp.readFile(DB_FILE, 'utf-8');
-  const parsed = JSON.parse(raw || '{}');
-  return normalizeDB(parsed);
+  if (kvEnabled()) {
+    let raw = await kvGet(KV_KEY);
+    if (!raw) {
+      await kvSet(KV_KEY, JSON.stringify(DEFAULT_DB));
+      raw = await kvGet(KV_KEY);
+    }
+    try {
+      const parsed = JSON.parse(raw || '{}');
+      return normalizeDB(parsed);
+    } catch {
+      return normalizeDB(DEFAULT_DB);
+    }
+  } else {
+    await ensureDataFile();
+    const raw = await fsp.readFile(DB_FILE, 'utf-8');
+    const parsed = JSON.parse(raw || '{}');
+    return normalizeDB(parsed);
+  }
 }
 
 async function writeDB(db) {
-  await ensureDataFile();
-  await fsp.writeFile(DB_FILE, JSON.stringify(db, null, 2));
+  if (kvEnabled()) {
+    await kvSet(KV_KEY, JSON.stringify(db));
+  } else {
+    await ensureDataFile();
+    await fsp.writeFile(DB_FILE, JSON.stringify(db, null, 2));
+  }
 }
 
 function genId(prefix = 'id') {
@@ -112,7 +151,6 @@ function ensureCategory(db, name, type = 'expense') {
 }
 
 function autoCategorize(db, rec) {
-  // rec: { type, amount, category, note, description, merchant, payee, accountId, accountName }
   if (rec.category) {
     const existing = findCategoryByName(db, rec.category);
     if (existing) return { categoryName: existing.name, categoryId: existing.id };
@@ -122,21 +160,17 @@ function autoCategorize(db, rec) {
   ].filter(Boolean).join(' ').toLowerCase();
 
   const absAmt = Math.abs(Number(rec.amount) || 0);
-  // decide expected type
   const expType = rec.type || ((Number(rec.amount) || 0) < 0 ? 'expense' : 'income');
 
   function ruleMatches(rule) {
     if (!rule || !rule.categoryId) return false;
-    // type check (if provided)
     if (rule.type && rec.type && rule.type !== rec.type) return false;
-    // amount range check
     if (rule.amountMin !== undefined && Number.isFinite(Number(rule.amountMin))) {
       if (absAmt < Number(rule.amountMin)) return false;
     }
     if (rule.amountMax !== undefined && Number.isFinite(Number(rule.amountMax))) {
       if (absAmt > Number(rule.amountMax)) return false;
     }
-    // account check
     if (Array.isArray(rule.accounts) && rule.accounts.length > 0) {
       const accVals = rule.accounts.map(x => String(x).toLowerCase());
       const recAcc = (rec.accountId || '').toString().toLowerCase();
@@ -144,16 +178,12 @@ function autoCategorize(db, rec) {
       const accOk = accVals.includes(recAcc) || accVals.includes(recAccName);
       if (!accOk) return false;
     }
-    // regex check
     if (rule.regex) {
       try {
         const re = new RegExp(rule.regex, rule.regexFlags || '');
         if (!re.test(text)) return false;
-      } catch {
-        // ignore invalid regex
-      }
+      } catch {}
     }
-    // keywords (if provided, at least one must match)
     if (Array.isArray(rule.keywords) && rule.keywords.length > 0) {
       const kws = rule.keywords.map(k => (k || '').toString().toLowerCase()).filter(Boolean);
       if (!kws.some(k => text.includes(k))) return false;
@@ -161,7 +191,6 @@ function autoCategorize(db, rec) {
     return true;
   }
 
-  // Custom rules (priority desc)
   const rules = Array.isArray(db.rules) ? db.rules.slice().sort((a, b) => (b.priority || 0) - (a.priority || 0)) : [];
   for (const r of rules) {
     if (!r || !r.categoryId) continue;
@@ -173,7 +202,6 @@ function autoCategorize(db, rec) {
     }
   }
 
-  // Check default keyword map
   for (const [catName, keys] of Object.entries(KEYWORD_MAP)) {
     if (keys.some(k => text.includes(k))) {
       const cat = ensureCategory(db, catName, expType === 'income' ? 'income' : 'expense');
@@ -181,7 +209,6 @@ function autoCategorize(db, rec) {
     }
   }
 
-  // Fallback Uncategorized
   const unc = ensureCategory(db, 'Uncategorized', expType === 'income' ? 'income' : 'expense');
   return { categoryName: unc.name, categoryId: unc.id };
 }
@@ -200,16 +227,12 @@ function sumSpentForCategoryMonth(db, categoryId, m) {
   }, 0);
 }
 
-// Root route serves the SPA
+// Root route
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-/**
- * Wallet (Dompet) routes
- */
-
-// Summary: balances and PnL snapshot (simple)
+// Summary
 app.get('/api/wallet/summary', async (req, res) => {
   try {
     const db = await readDB();
@@ -226,7 +249,7 @@ app.get('/api/wallet/summary', async (req, res) => {
   }
 });
 
-// Accounts CRUD
+// Accounts
 app.get('/api/wallet/accounts', async (req, res) => {
   const db = await readDB();
   res.json(db.accounts);
@@ -262,7 +285,7 @@ app.delete('/api/wallet/accounts/:id', async (req, res) => {
 
 // Transactions
 app.get('/api/wallet/transactions', async (req, res) => {
-  const { accountId, month, startMonth, endMonth, category, limit = 100 } = req.query;
+  const { accountId, month, startMonth, endMonth, category, minAmount, maxAmount, limit = 100 } = req.query;
   const db = await readDB();
   let tx = db.transactions.slice().sort((a, b) => (a.date < b.date ? 1 : -1));
   if (accountId) tx = tx.filter(t => t.accountId === accountId);
@@ -280,6 +303,10 @@ app.get('/api/wallet/transactions', async (req, res) => {
       return m >= start && m <= end;
     });
   }
+  const minA = minAmount !== undefined && minAmount !== '' ? Number(minAmount) : undefined;
+  const maxA = maxAmount !== undefined && maxAmount !== '' ? Number(maxAmount) : undefined;
+  if (Number.isFinite(minA)) tx = tx.filter(t => Number(t.amount) >= minA);
+  if (Number.isFinite(maxA)) tx = tx.filter(t => Number(t.amount) <= maxA);
   res.json(tx.slice(0, Number(limit)));
 });
 
@@ -290,7 +317,6 @@ async function maybeOverspendNotify(db, tx) {
     const m = monthKey(tx.date);
     const cat = findCategoryByName(db, tx.category) || (tx.categoryId ? findCategoryById(db, tx.categoryId) : undefined);
     if (!cat) return;
-    // Find a budget for this category in this month
     const bud = db.budgets.find(b => b.categoryId === cat.id && b.month === m);
     if (!bud) return;
     const spent = sumSpentForCategoryMonth(db, cat.id, m);
@@ -308,9 +334,7 @@ async function maybeOverspendNotify(db, tx) {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload)
     });
-  } catch {
-    // ignore notify errors
-  }
+  } catch {}
 }
 
 app.post('/api/wallet/transactions', async (req, res) => {
@@ -323,10 +347,8 @@ app.post('/api/wallet/transactions', async (req, res) => {
   if (!account) return res.status(400).json({ error: 'invalid accountId' });
   const tx = { id: genId('tx'), date, accountId, type, category: category || '', categoryId: categoryId || undefined, amount: Number(amount), note };
   db.transactions.push(tx);
-  // Simple balance update
   account.balance = Number(account.balance || 0) + Number(amount);
   await writeDB(db);
-  // trigger overspend notification if applicable
   if (type === 'expense') {
     await maybeOverspendNotify(db, tx);
   }
@@ -349,9 +371,7 @@ app.post('/api/wallet/holdings', async (req, res) => {
   res.json(holding);
 });
 
-/**
- * Categories
- */
+// Categories
 app.get('/api/categories', async (req, res) => {
   const db = await readDB();
   res.json(db.categories);
@@ -384,14 +404,12 @@ app.delete('/api/categories/:id', async (req, res) => {
   const removed = db.categories.find(c => c.id === req.params.id);
   db.categories = db.categories.filter(c => c.id !== req.params.id);
   if (db.categories.length === before) return res.status(404).json({ error: 'not found' });
-  // remove budgets referencing this category
   const removedBudgets = db.budgets.filter(b => b.categoryId === req.params.id);
   db.budgets = db.budgets.filter(b => b.categoryId !== req.params.id);
   await writeDB(db);
   res.json({ ok: true, removed, removedBudgets });
 });
 
-// Restore category (supports undo)
 app.post('/api/categories/restore', async (req, res) => {
   const { category, budgets = [] } = req.body || {};
   if (!category || !category.id || !category.name) return res.status(400).json({ error: 'category{id,name} required' });
@@ -399,7 +417,6 @@ app.post('/api/categories/restore', async (req, res) => {
   const exists = db.categories.find(c => c.id === category.id);
   if (exists) return res.status(400).json({ error: 'category id already exists' });
   db.categories.push({ id: category.id, name: category.name, type: category.type || 'expense', parentId: category.parentId || null });
-  // optional: restore budgets
   for (const b of budgets || []) {
     if (!b || !b.id || !b.categoryId || !b.month) continue;
     if (db.budgets.find(x => x.id === b.id)) continue;
@@ -409,9 +426,7 @@ app.post('/api/categories/restore', async (req, res) => {
   res.json({ ok: true });
 });
 
-/**
- * Budgets
- */
+// Budgets
 app.get('/api/budgets', async (req, res) => {
   const db = await readDB();
   const { month } = req.query;
@@ -454,12 +469,14 @@ app.delete('/api/budgets/:id', async (req, res) => {
   res.json({ ok: true, removed });
 });
 
-// Restore budget (supports undo)
 app.post('/api/budgets/restore', async (req, res) => {
   const { budget } = req.body || {};
   if (!budget || !budget.id || !budget.categoryId || !budget.month) return res.status(400).json({ error: 'budget{id,categoryId,month} required' });
   const db = await readDB();
   if (db.budgets.find(b => b.id === budget.id)) return res.status(400).json({ error: 'budget id already exists' });
+  if (db.budgets.find(b => b.categoryId === budget.categoryId && b.month === budget.month)) {
+    return res.status(400).json({ error: 'budget exists for this category & month' });
+  }
   const cat = findCategoryById(db, budget.categoryId);
   if (!cat) return res.status(400).json({ error: 'invalid categoryId' });
   db.budgets.push({ id: budget.id, categoryId: budget.categoryId, month: budget.month, amount: Number(budget.amount) || 0 });
@@ -467,9 +484,7 @@ app.post('/api/budgets/restore', async (req, res) => {
   res.json({ ok: true });
 });
 
-/**
- * Rules (custom auto-categorization)
- */
+// Rules
 app.get('/api/rules', async (req, res) => {
   const db = await readDB();
   res.json(db.rules);
@@ -540,7 +555,7 @@ app.delete('/api/rules/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-// Budget report and overspend
+// Reports
 app.get('/api/reports/budget', async (req, res) => {
   try {
     const { month } = req.query;
@@ -589,7 +604,7 @@ app.get('/api/budget/overspend', async (req, res) => {
   }
 });
 
-// Import transactions from parsed CSV records
+// Import (records prepared on client)
 app.post('/api/import/transactions', async (req, res) => {
   try {
     const { records, mapping = {}, autoCategorize: doAuto = true } = req.body || {};
@@ -623,10 +638,10 @@ app.post('/api/import/transactions', async (req, res) => {
     const sample = [];
 
     for (const row of records) {
-      // Try to match columns
       const dateStr = pick(row, [defaults.date, 'date', 'Date', 'tanggal', 'Tanggal', 'DTPOSTED', 'D']);
       const accountName = pick(row, [defaults.account, 'account', 'Account', 'akun', 'Akun']);
-      const accountId = pick(row, [defaults.accountId, 'accountId', 'AccountId']);
+      let accountId = pick(row, [defaults.accountId, 'accountId', 'AccountId']);
+      const ofxAcctId = pick(row, ['ofxAcctId', 'OFXACCTID', 'ACCTID']);
       const typeRaw = (pick(row, [defaults.type, 'type', 'Type', 'TRNTYPE']) || '').toString().toLowerCase();
       let amountRaw = pick(row, [defaults.amount, 'amount', 'Amount', 'nominal', 'Nominal', 'value', 'Value', 'TRNAMT', 'T']);
       const categoryRaw = pick(row, [defaults.category, 'category', 'Category', 'kategori', 'Kategori', 'L']);
@@ -635,7 +650,6 @@ app.post('/api/import/transactions', async (req, res) => {
 
       if (!dateStr) continue;
 
-      // Parse amount
       let amt = 0;
       if (typeof amountRaw === 'number') {
         amt = amountRaw;
@@ -646,7 +660,6 @@ app.post('/api/import/transactions', async (req, res) => {
       }
       if (!Number.isFinite(amt)) amt = 0;
 
-      // Determine type
       let type = typeRaw;
       if (!type) {
         type = amt < 0 ? 'expense' : 'income';
@@ -654,21 +667,24 @@ app.post('/api/import/transactions', async (req, res) => {
       else if (type.startsWith('inc') || type === 'credit') type = 'income';
       else if (type.startsWith('tran')) type = 'transfer';
 
-      // Account
-      const ofxAcctId = pick(row, ['ofxAcctId', 'OFXACCTID']);
-      let accId = accountId;
-      if (!accId && ofxAcctId && db.settings && db.settings.ofxMap && db.settings.ofxMap[ofxAcctId]) {
-        accId = db.settings.ofxMap[ofxAcctId];
+      if (!accountId && ofxAcctId && db.settings && db.settings.ofxMap && db.settings.ofxMap[ofxAcctId]) {
+        accountId = db.settings.ofxMap[ofxAcctId];
       }
-      if (!accId) {
-        let acc = db.accounts.find(a => a.name.toLowerCase() === String(accountName || 'Cash').toLowerCase());
+      if (!accountId) {
+        let acc = db.accounts.find(a => a.name.toLowerCase() === String(accountName || '').toLowerCase());
         if (!acc) {
-          acc = { id: genId('acc'), name: accountName || (ofxAcctId ? `OFX ${ofx
-      // Category
+          const fallbackName = accountName || (ofxAcctId ? `OFX ${ofxAcctId}` : 'Imported');
+          acc = { id: genId('acc'), name: fallbackName, type: 'cash', balance: 0 };
+          db.accounts.push(acc);
+          createdAccounts++;
+        }
+        accountId = acc.id;
+      }
+
       let categoryName = categoryRaw || '';
       let categoryId = undefined;
       if (!categoryName && doAuto) {
-        const auto = autoCategorize(db, { type, amount: amt, category: categoryRaw, note: noteRaw, description: descriptionRaw, accountId: accId, accountName });
+        const auto = autoCategorize(db, { type, amount: amt, category: categoryRaw, note: noteRaw, description: descriptionRaw, accountId, accountName });
         categoryName = auto.categoryName;
         categoryId = auto.categoryId;
         autoCatzd++;
@@ -677,13 +693,10 @@ app.post('/api/import/transactions', async (req, res) => {
         if (c) categoryId = c.id;
       }
 
-      // Normalize date
       let d = String(dateStr);
-      // OFX: YYYYMMDD or YYYYMMDDHHMMSS
       if (/^\d{8,14}$/.test(d)) {
         d = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`;
       }
-      // QIF typical: M/D'YY or D M/D/YY
       if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(d)) {
         const parts = d.split(/[\/']/);
         const mm = parts[0].padStart(2,'0');
@@ -693,11 +706,10 @@ app.post('/api/import/transactions', async (req, res) => {
         d = `${yy}-${mm}-${dd}`;
       }
 
-      // Build transaction
       const tx = {
         id: genId('tx'),
         date: d.slice(0, 10),
-        accountId: accId,
+        accountId,
         type,
         category: categoryName || '',
         categoryId,
@@ -705,9 +717,7 @@ app.post('/api/import/transactions', async (req, res) => {
         note: noteRaw || descriptionRaw || ''
       };
       db.transactions.push(tx);
-
-      // Update balance
-      const account = db.accounts.find(a => a.id === accId);
+      const account = db.accounts.find(a => a.id === accountId);
       if (account) account.balance = Number(account.balance || 0) + Number(amt);
 
       if (sample.length < 5) sample.push(tx);
@@ -721,9 +731,7 @@ app.post('/api/import/transactions', async (req, res) => {
   }
 });
 
-/**
- * Sentiment routes (existing)
- */
+// Sentiment
 async function googleSentiment(text) {
   const key = process.env.GOOGLE_CLOUD_API_KEY;
   if (!key) throw new Error('GOOGLE_CLOUD_API_KEY not set');
@@ -809,61 +817,15 @@ app.post('/api/sentiment/analyze', async (req, res) => {
   }
 });
 
-/**
- * Economic Calendar and Indicators (existing)
- */
-app.get('/api/calendar/tradingeconomics', async (req, res) => {
-  try {
-    const { country, start, end, importance } = req.query;
-    const client = process.env.TRADINGECONOMICS_CLIENT || 'guest';
-    const secret = process.env.TRADINGECONOMICS_SECRET || 'guest';
-    const auth = `${client}:${secret}`;
-    const url = new URL('https://api.tradingeconomics.com/calendar');
-    url.searchParams.set('format', 'json');
-    url.searchParams.set('c', auth);
-    if (country) url.searchParams.set('country', country);
-    if (start) url.searchParams.set('d1', start);
-    if (end) url.searchParams.set('d2', end);
-    if (importance) url.searchParams.set('importance', importance);
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`TradingEconomics error: ${r.status}`);
-    const data = await r.json();
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Alpha Vantage Macro Indicators (not calendar events, but useful)
-app.get('/api/indicators/alphavantage', async (req, res) => {
-  try {
-    const key = process.env.ALPHA_VANTAGE_API_KEY;
-    if (!key) return res.status(400).json({ error: 'ALPHA_VANTAGE_API_KEY not set' });
-    const { func = 'REAL_GDP', interval = 'annual' } = req.query;
-    const url = new URL('https://www.alphavantage.co/query');
-    url.searchParams.set('function', func);
-    if (interval) url.searchParams.set('interval', interval);
-    url.searchParams.set('apikey', key);
-    const r = await fetch(url);
-    if (!r.ok) throw new Error(`Alpha Vantage error: ${r.status}`);
-    const data = await r.json();
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/**
- * n8n integration
- * - Receive webhooks from n8n
- * - Forward to n8n webhook
- */
+// n8n
 app.post('/webhooks/n8n', async (req, res) => {
   try {
-    await ensureDataFile();
-    const logPath = path.join(DATA_DIR, 'hooks.log');
-    const entry = { at: new Date().toISOString(), body: req.body };
-    await fsp.appendFile(logPath, JSON.stringify(entry) + '\n');
+    if (!kvEnabled()) {
+      await ensureDataFile();
+      const logPath = path.join(DATA_DIR, 'hooks.log');
+      const entry = { at: new Date().toISOString(), body: req.body };
+      await fsp.appendFile(logPath, JSON.stringify(entry) + '\n');
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -887,35 +849,9 @@ app.post('/n8n/forward', async (req, res) => {
   }
 });
 
-/**
- * Settings: OFX account mapping
- */
-app.get('/api/settings/ofx-map', async (req, res) => {
-  const db = await readDB();
-  const map = (db.settings && db.settings.ofxMap) || {};
-  res.json({ map, accounts: db.accounts });
-});
-
-app.post('/api/settings/ofx-map', async (req, res) => {
-  const { map } = req.body || {};
-  if (!map || typeof map !== 'object') return res.status(400).json({ error: 'map object required' });
-  const db = await readDB();
-  if (!db.settings) db.settings = {};
-  if (!db.settings.ofxMap) db.settings.ofxMap = {};
-  // Only keep mappings to valid accountIds
-  for (const [k, v] of Object.entries(map)) {
-    const acc = db.accounts.find(a => a.id === v);
-    if (acc) db.settings.ofxMap[k] = v;
-  }
-  await writeDB(db);
-  res.json({ ok: true, map: db.settings.ofxMap });
-});
-
-/**
- * Export transactions: CSV, QIF, OFX
- */
+// Export helpers and endpoints
 function filterTransactions(db, query) {
-  const { month, startMonth, endMonth, accountId, category } = query;
+  const { month, startMonth, endMonth, accountId, category, minAmount, maxAmount } = query;
   let arr = db.transactions.slice().sort((a, b) => (a.date > b.date ? 1 : -1));
   if (accountId) arr = arr.filter(t => t.accountId === accountId);
   if (category) {
@@ -932,8 +868,11 @@ function filterTransactions(db, query) {
       return m >= start && m <= end;
     });
   }
-  return ar_coder;new
-</}
+  const minA = minAmount !== undefined && minAmount !== '' ? Number(minAmount) : undefined;
+  const maxA = maxAmount !== undefined && maxAmount !== '' ? Number(maxAmount) : undefined;
+  if (Number.isFinite(minA)) arr = arr.filter(t => Number(t.amount) >= minA);
+  if (Number.isFinite(maxA)) arr = arr.filter(t => Number(t.amount) <= maxA);
+  return arr;
 }
 
 function toCSV(db, txs) {
@@ -1043,12 +982,22 @@ function toOFX(db, txs) {
   return header + body.join('\n');
 }
 
+function sanitizeFile(name) {
+  return String(name).replace(/[^a-z0-9._-]+/gi, '_');
+}
+
 app.get('/api/export/transactions.csv', async (req, res) => {
   const db = await readDB();
   const txs = filterTransactions(db, req.query);
   const out = toCSV(db, txs);
+  const accountId = req.query.accountId;
+  const accountName = accountId ? (db.accounts.find(a => a.id === accountId)?.name || accountId) : 'all';
+  let timePart = 'all';
+  if (req.query.month) timePart = req.query.month;
+  else if (req.query.startMonth || req.query.endMonth) timePart = `${req.query.startMonth || 'start'}_${req.query.endMonth || 'end'}`;
+  const fname = `transactions-${sanitizeFile(accountName)}-${sanitizeFile(timePart)}.csv`;
   res.setHeader('content-type', 'text/csv; charset=utf-8');
-  res.setHeader('content-disposition', 'attachment; filename="transactions.csv"');
+  res.setHeader('content-disposition', `attachment; filename="${fname}"`);
   res.send(out);
 });
 
@@ -1056,8 +1005,14 @@ app.get('/api/export/transactions.qif', async (req, res) => {
   const db = await readDB();
   const txs = filterTransactions(db, req.query);
   const out = toQIF(db, txs);
+  const accountId = req.query.accountId;
+  const accountName = accountId ? (db.accounts.find(a => a.id === accountId)?.name || accountId) : 'all';
+  let timePart = 'all';
+  if (req.query.month) timePart = req.query.month;
+  else if (req.query.startMonth || req.query.endMonth) timePart = `${req.query.startMonth || 'start'}_${req.query.endMonth || 'end'}`;
+  const fname = `transactions-${sanitizeFile(accountName)}-${sanitizeFile(timePart)}.qif`;
   res.setHeader('content-type', 'application/x-qif; charset=utf-8');
-  res.setHeader('content-disposition', 'attachment; filename="transactions.qif"');
+  res.setHeader('content-disposition', `attachment; filename="${fname}"`);
   res.send(out);
 });
 
@@ -1065,20 +1020,18 @@ app.get('/api/export/transactions.ofx', async (req, res) => {
   const db = await readDB();
   const txs = filterTransactions(db, req.query);
   const out = toOFX(db, txs);
+  const accountId = req.query.accountId;
+  const accountName = accountId ? (db.accounts.find(a => a.id === accountId)?.name || accountId) : 'all';
+  let timePart = 'all';
+  if (req.query.month) timePart = req.query.month;
+  else if (req.query.startMonth || req.query.endMonth) timePart = `${req.query.startMonth || 'start'}_${req.query.endMonth || 'end'}`;
+  const fname = `transactions-${sanitizeFile(accountName)}-${sanitizeFile(timePart)}.ofx`;
   res.setHeader('content-type', 'application/x-ofx; charset=utf-8');
-  res.setHeader('content-disposition', 'attachment; filename="transactions.ofx"');
+  res.setHeader('content-disposition', `attachment; filename="${fname}"`);
   res.send(out);
 });
 
-/**
- * Bulk export ZIP
- * query:
- *  - mode=month|category
- *  - format=csv|qif|ofx
- *  - accountId?=
- *  - month?= or startMonth?= & endMonth?=
- *  - category?= (optional filter)
- */
+// Bulk ZIP
 app.get('/api/export/bulk.zip', async (req, res) => {
   const db = await readDB();
   const { mode = 'month', format = 'csv' } = req.query;
@@ -1105,7 +1058,6 @@ app.get('/api/export/bulk.zip', async (req, res) => {
       zip.file(fname, content);
     }
   } else {
-    // mode=month
     const groups = {};
     for (const t of txs) {
       const m = monthKey(t.date);
@@ -1128,10 +1080,8 @@ app.get('/api/export/bulk.zip', async (req, res) => {
   res.send(buffer);
 });
 
-// Handle favicon to avoid 404 noise
+// Favicon and SPA fallback
 app.get('/favicon.ico', (req, res) => res.status(204).end());
-
-// SPA history fallback for non-API routes
 app.get(/^\/(?!api|webhooks|n8n).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });

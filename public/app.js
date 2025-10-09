@@ -975,6 +975,8 @@ function buildTxQuery(limit = 1000) {
   const cat = document.getElementById('expCategory')?.value || '';
   const start = document.getElementById('expStartMonth')?.value || '';
   const end = document.getElementById('expEndMonth')?.value || '';
+  const minAmt = document.getElementById('expMinAmount')?.value || '';
+  const maxAmt = document.getElementById('expMaxAmount')?.value || '';
   if (acc) params.set('accountId', acc);
   if (cat) params.set('category', cat);
   if (month) params.set('month', month);
@@ -982,6 +984,8 @@ function buildTxQuery(limit = 1000) {
     if (start) params.set('startMonth', start);
     if (end) params.set('endMonth', end);
   }
+  if (minAmt !== '') params.set('minAmount', minAmt);
+  if (maxAmt !== '') params.set('maxAmount', maxAmt);
   params.set('limit', String(limit));
   return params.toString();
 }
