@@ -128,16 +128,25 @@ Export
 - GET /api/export/transactions.csv (same query filters as /transactions)
 - GET /api/export/transactions.qif
 - GET /api/export/transactions.ofx
-- GET /api/export/bulk.zip?mode=month|day|category|account|account_day|account_month|account_month_category&format=csv|qif|ofx&...filters
+- GET /api/export/bulk.zip?mode=month|day|category|account|account_day|account_month|account_month_category|type_month|type_account_month|category_month|category_account_month&format=csv|qif|ofx&...filters
   - Group by:
     - Month (YYYY-MM)
     - Day (YYYY-MM-DD)
     - Category
+    - Category / Month (nested)
+    - Category / Account / Month (nested)
     - Account
     - Account + Day (per-account daily files)
     - Account + Month (per-account monthly files)
-    - Account + Month + Category (nested folders)
-  - File names include grouping context, e.g. 2025-01.csv, 2025-01-10.csv, Cash-2025-01-10.csv, Cash-2025-01.csv, Cash/2025-01/Food_&_Dining.csv
+    - Account / Month / Category (nested folders)
+    - Type / Month (nested)
+    - Type / Account / Month (nested)
+  - File names include grouping context, e.g.:
+    - 2025-01.csv, 2025-01-10.csv
+    - Cash-2025-01-10.csv, Cash-2025-01.csv
+    - Cash/2025-01/Food_&_Dining.csv
+    - expense/2025-01.csv, expense/Cash/2025-01.csv
+    - Food_&_Dining/2025-01.csv, Food_&_Dining/Cash/2025-01.csv
   - Additional filters supported: minAmount, maxAmount, startDate/endDate (YYYY-MM-DD), type=income|expense|transfer
 
 Sentiment
@@ -157,14 +166,12 @@ n8n
   - If KV (Vercel/Upstash) configured: RPUSH to KV list key (KV_HOOKS_KEY, default fin:hooks)
   - If Deno KV available: set entries under ['fin','hooks', <timestamp_random>]
   - Else: append to local file data/hooks.log
-- GET /webhooks/n8n/logs?limit=50&offset=0 -> returns { total, items[] } newest-first, supports KV/Deno KV/File backends
-- GET /webhooks/n8n/logs/stream -> Server-Sent Events (SSE) stream for live logs (sends last 10 on connect, then new entries)
+- GET /webhooks/n8n/logs?limit=50&offset=0 -> returns { total, items[] } newest-first (KV/Deno KV/File)
+- GET /webhooks/n8n/logs.jsonl?limit=1000&offset=0 -> downloads NDJSON (JSON Lines), newest-first
+- GET /webhooks/n8n/logs/stream -> Server-Sent Events (SSE) stream for live logs (sends last 10 on connect, then new entries). UI shows Connected/Reconnecting with attempt count.
+- POST /webhooks/n8n/logs/clear (also DELETE /webhooks/n8n/logs) -> clears stored logs
 - POST /n8n/forward { url?, data } -> forwards JSON to an n8n webhook (uses N8N_WEBHOOK_URL if url omitted)
 - Automatic overspending alert: when a new expense pushes a category above its monthly budget, the server sends a JSON payload to N8N_WEBHOOK_URL (if set)
-  - If KV (Vercel/Upstash) configured: RPUSH to KV list key (KV_HOOKS_KEY, default fin:hooks)
-  - If Deno KV available: set entries under ['fin','hooks' <ptimestamp_random>]
-  - Else: append to local file data/hooks.log
-- POST /n8n/forward { url?, data } -> forwards N8N_WEBHOOK_URL (if set)
 
 ## Persistence in serverless (Vercel KV / Upstash / Deno KV)
 
@@ -201,6 +208,15 @@ It will read KV if configured, otherwise data/db.json.
 
 - Keep your API keys in environment variables; the UI does not expose them.
 - Rate limit or protect /api routes if you plan a public deployment.
+
+Logs endpoints auth and rate limiting
+- Optional token auth for logs endpoints: set LOGS_AUTH_TOKEN in environment.
+  - Client must provide token via:
+    - Query: ?token=YOUR_TOKEN (works for SSE)
+    - Header: Authorization: Bearer YOUR_TOKEN or X-Logs-Token: YOUR_TOKEN
+  - UI provides a Token input (stored in localStorage) and adds it to requests automatically.
+- Simple rate limiting for logs endpoints (GET /webhooks/n8n/logs, /logs.jsonl, /logs/stream, POST /logs/clear):
+  - In-memory per-IP window 60 seconds, max 60 requests. Exceeding returns HTTP 429.
 
 ## License
 

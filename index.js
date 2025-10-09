@@ -22,6 +22,7 @@ const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
 const KV_KEY = process.env.KV_DB_KEY || 'fin:db';
 const HOOKS_LIST_KEY = process.env.KV_HOOKS_KEY || 'fin:hooks';
+const LOGS_AUTH_TOKEN = process.env.LOGS_AUTH_TOKEN || '';
 const kvEnabled = () => !!(KV_URL && KV_TOKEN);
 async function kvCmd(cmdArr) {
   const r = await fetch(KV_URL, {
@@ -34,6 +35,40 @@ async function kvCmd(cmdArr) {
   });
   try { return await r.json(); } catch { return {}; }
 }
+
+// Optional auth + simple rate limit for logs endpoints
+function extractLogsToken(req) {
+  const ah = req.headers['authorization'] || '';
+  if (ah.toLowerCase().startsWith('bearer ')) return ah.slice(7).trim();
+  const hdr = req.headers['x-logs-token'];
+  if (hdr) return String(hdr);
+  if (req.query && req.query.token) return String(req.query.token);
+  return '';
+}
+function logsAuthOk(req) {
+  if (!LOGS_AUTH_TOKEN) return true;
+  const tok = extractLogsToken(req);
+  return tok && tok === LOGS_AUTH_TOKEN;
+}
+const logsRate = new Map();
+function logsRateOk(req) {
+  const key = (req.ip || req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim() || 'ip';
+  const now = Date.now();
+  const win = 60_000; // 60s window
+  const max = 60; // 60 requests per window per IP
+  let rec = logsRate.get(key);
+  if (!rec || (now - rec.start) > win) {
+    rec = { start: now, count: 0 };
+  }
+  if (rec.count >= max) {
+    logsRate.set(key, rec);
+    return false;
+  }
+  rec.count += 1;
+  logsRate.set(key, rec);
+  return true;
+}
+
 async function kvGet(key) {
   const data = await kvCmd(['GET', key]);
   return data && data.result !== undefined ? data.result : null;
@@ -910,6 +945,9 @@ app.post('/n8n/forward', async (req, res) => {
 // Read n8n hook logs with paging (limit/offset)
 app.get('/webhooks/n8n/logs', async (req, res) => {
   try {
+    if (!logsAuthOk(req)) return res.status(401).json({ error: 'unauthorized' });
+    if (!logsRateOk(req)) return res.status(429).json({ error: 'rate_limited' });
+
     const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 50));
     const offset = Math.max(0, Number(req.query.offset) || 0);
 
@@ -964,9 +1002,70 @@ app.get('/webhooks/n8n/logs', async (req, res) => {
   }
 });
 
+// Download logs as JSONL (NDJSON)
+app.get('/webhooks/n8n/logs.jsonl', async (req, res) => {
+  try {
+    if (!logsAuthOk(req)) return res.status(401).end('unauthorized');
+    if (!logsRateOk(req)) return res.status(429).end('rate_limited');
+
+    const limit = Math.min(5000, Math.max(1, Number(req.query.limit) || 1000));
+    const offset = Math.max(0, Number(req.query.offset) || 0);
+
+    let lines = [];
+    let total = 0;
+
+    if (kvEnabled()) {
+      total = await kvListLen(HOOKS_LIST_KEY);
+      if (total > 0) {
+        const lastIdx = total - 1 - offset;
+        const firstIdx = Math.max(0, lastIdx - (limit - 1));
+        if (firstIdx <= lastIdx) {
+          const arr = await kvListRange(HOOKS_LIST_KEY, firstIdx, lastIdx);
+          lines = arr.reverse(); // newest first
+        }
+      }
+    } else if (denoKvAvailable()) {
+      const kv = await getDenoKv();
+      const all = [];
+      for await (const entry of kv.list({ prefix: ['fin', 'hooks'] })) {
+        all.push(entry);
+      }
+      total = all.length;
+      const sorted = all.map(e => {
+        const k = e.key?.[2] || '';
+        const ts = parseInt(String(k).split('_')[0], 10);
+        const val = e.value;
+        const str = typeof val === 'string' ? val : JSON.stringify(val);
+        return { ts: Number.isFinite(ts) ? ts : 0, str };
+      }).sort((a, b) => b.ts - a.ts); // newest first
+      lines = sorted.slice(offset, offset + limit).map(x => x.str);
+    } else {
+      await ensureDataFile();
+      const logPath = path.join(DATA_DIR, 'hooks.log');
+      if (fs.existsSync(logPath)) {
+        const raw = await fsp.readFile(logPath, 'utf-8');
+        const arr = raw.split(/\r?\n/).filter(Boolean).reverse(); // newest first
+        total = arr.length;
+        lines = arr.slice(offset, offset + limit);
+      }
+    }
+
+    const now = new Date();
+    const ts = now.toISOString().replace(/[-:]/g, '').slice(0,15);
+    res.setHeader('content-type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('content-disposition', `attachment; filename="n8n-logs-${ts}.jsonl"`);
+    res.send(lines.join('\n'));
+  } catch (e) {
+    res.status(500).end('error');
+  }
+});
+
 // Live SSE stream for n8n hook logs
 app.get('/webhooks/n8n/logs/stream', async (req, res) => {
   try {
+    if (!logsAuthOk(req)) { res.status(401).end('unauthorized'); return; }
+    if (!logsRateOk(req)) { res.status(429).end('rate_limited'); return; }
+
     res.setHeader('content-type', 'text/event-stream');
     res.setHeader('cache-control', 'no-cache, no-transform');
     res.setHeader('connection', 'keep-alive');
@@ -1072,13 +1171,14 @@ app.get('/webhooks/n8n/logs/stream', async (req, res) => {
 // Clear n8n logs
 app.post('/webhooks/n8n/logs/clear', async (req, res) => {
   try {
+    if (!logsAuthOk(req)) return res.status(401).json({ error: 'unauthorized' });
+    if (!logsRateOk(req)) return res.status(429).json({ error: 'rate_limited' });
     if (kvEnabled()) {
       await kvCmd(['DEL', HOOKS_LIST_KEY]);
       return res.json({ ok: true, backend: 'kv' });
     }
     if (denoKvAvailable()) {
       const kv = await getDenoKv();
-      const ops = [];
       for await (const entry of kv.list({ prefix: ['fin', 'hooks'] })) {
         await kv.delete(entry.key);
       }
@@ -1096,6 +1196,8 @@ app.post('/webhooks/n8n/logs/clear', async (req, res) => {
 // Optional DELETE for clearing logs
 app.delete('/webhooks/n8n/logs', async (req, res) => {
   try {
+    if (!logsAuthOk(req)) return res.status(401).json({ error: 'unauthorized' });
+    if (!logsRateOk(req)) return res.status(429).json({ error: 'rate_limited' });
     if (kvEnabled()) {
       await kvCmd(['DEL', HOOKS_LIST_KEY]);
       return res.json({ ok: true, backend: 'kv' });
@@ -1381,6 +1483,78 @@ app.get('/api/export/bulk.zip', async (req, res) => {
       const m = monthKey(t.date);
       const cat = t.category || (t.categoryId || 'Uncategorized');
       const key = `${accName}/${m}/${cat}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    for (const [key, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = key.split('/').map(sanitize).join('/') + `.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else if (mode === 'type_month') {
+    const groups = {};
+    for (const t of txs) {
+      const typ = t.type || 'unknown';
+      const m = monthKey(t.date);
+      const key = `${typ}/${m}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    for (const [key, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = key.split('/').map(sanitize).join('/') + `.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else if (mode === 'type_account_month') {
+    const groups = {};
+    for (const t of txs) {
+      const typ = t.type || 'unknown';
+      const acc = db.accounts.find(a => a.id === t.accountId);
+      const accName = acc ? acc.name : t.accountId || 'Account';
+      const m = monthKey(t.date);
+      const key = `${typ}/${accName}/${m}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    for (const [key, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = key.split('/').map(sanitize).join('/') + `.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else if (mode === 'category_month') {
+    const groups = {};
+    for (const t of txs) {
+      const cat = t.category || (t.categoryId || 'Uncategorized');
+      const m = monthKey(t.date);
+      const key = `${cat}/${m}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    for (const [key, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = key.split('/').map(sanitize).join('/') + `.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else if (mode === 'category_account_month') {
+    const groups = {};
+    for (const t of txs) {
+      const cat = t.category || (t.categoryId || 'Uncategorized');
+      const acc = db.accounts.find(a => a.id === t.accountId);
+      const accName = acc ? acc.name : t.accountId || 'Account';
+      const m = monthKey(t.date);
+      const key = `${cat}/${accName}/${m}`;
       if (!groups[key]) groups[key] = [];
       groups[key].push(t);
     }

@@ -1050,6 +1050,12 @@ document.getElementById('expZipBtn')?.addEventListener('click', () => {
 /* n8n Logs */
 state.n8nLogs = state.n8nLogs || { items: [], total: 0, offset: 0, limit: 50, es: null, retries: 0 };
 
+function getLogsToken() {
+  const inp = document.getElementById('n8nLogsToken');
+  const val = inp?.value || '';
+  return val.trim();
+}
+
 function setN8nLiveStatus(text, cls = 'text-slate-500') {
   const el = document.getElementById('n8nLogsLiveStatus');
   if (!el) return;
@@ -1083,8 +1089,10 @@ async function loadN8nLogs() {
       const lim = Number(inp.value || 50);
       state.n8nLogs.limit = Math.max(1, Math.min(500, lim || 50));
     }
-    const qs = new URLSearchParams({ limit: String(state.n8nLogs.limit), offset: String(state.n8nLogs.offset) }).toString();
-    const res = await jsonFetch(`/webhooks/n8n/logs?${qs}`);
+    const params = new URLSearchParams({ limit: String(state.n8nLogs.limit), offset: String(state.n8nLogs.offset) });
+    const tok = getLogsToken();
+    if (tok) params.set('token', tok);
+    const res = await jsonFetch(`/webhooks/n8n/logs?${params.toString()}`);
     if (res && !res.error) {
       state.n8nLogs.total = res.total || 0;
       state.n8nLogs.items = res.items || [];
@@ -1093,6 +1101,9 @@ async function loadN8nLogs() {
   } catch {}
 }
 
+document.getElementById('n8nLogsToken')?.addEventListener('change', (e) => {
+  try { localStorage.setItem('logsToken', e.target.value || ''); } catch {}
+});
 document.getElementById('n8nLogsRefresh')?.addEventListener('click', () => {
   state.n8nLogs.offset = 0;
   loadN8nLogs();
@@ -1107,9 +1118,20 @@ document.getElementById('n8nLogsNext')?.addEventListener('click', () => {
 });
 document.getElementById('n8nLogsClear')?.addEventListener('click', async () => {
   if (!confirm('Clear all n8n logs?')) return;
-  await jsonFetch('/webhooks/n8n/logs/clear', { method: 'POST', body: '{}' });
+  const tok = getLogsToken();
+  const url = '/webhooks/n8n/logs/clear' + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+  await jsonFetch(url, { method: 'POST', body: '{}' });
   state.n8nLogs.offset = 0;
   await loadN8nLogs();
+});
+document.getElementById('n8nLogsDownload')?.addEventListener('click', () => {
+  const tok = getLogsToken();
+  const params = new URLSearchParams({
+    limit: String(state.n8nLogs.limit || 1000),
+    offset: String(state.n8nLogs.offset || 0)
+  });
+  if (tok) params.set('token', tok);
+  window.open(`/webhooks/n8n/logs.jsonl?${params.toString()}`, '_blank');
 });
 
 document.getElementById('n8nLogsLiveBtn')?.addEventListener('click', () => {
@@ -1118,7 +1140,9 @@ document.getElementById('n8nLogsLiveBtn')?.addEventListener('click', () => {
     try {
       state.n8nLogs.retries = 0;
       setN8nLiveStatus('Connecting...', 'text-slate-500');
-      state.n8nLogs.es = new EventSource('/webhooks/n8n/logs/stream');
+      const tok = getLogsToken();
+      const url = '/webhooks/n8n/logs/stream' + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+      state.n8nLogs.es = new EventSource(url);
       state.n8nLogs.es.onopen = () => {
         state.n8nLogs.retries = 0;
         setN8nLiveStatus('Connected', 'text-green-600');
@@ -1254,6 +1278,11 @@ document.getElementById('chatSend')?.addEventListener('click', async () => {
     if (Array.isArray(r)) state.redoStack = r;
     updateUndoBar();
   } catch {}
+  try {
+    const tok = localStorage.getItem('logsToken') || '';
+    const inp = document.getElementById('n8nLogsToken');
+    if (inp) inp.value = tok;
+  } catch {}
   show('wallet');
   refreshSummary();
   loadAccounts();
@@ -1263,4 +1292,4 @@ document.getElementById('chatSend')?.addEventListener('click', async () => {
   loadBudgetReport();
   loadN8nLogs();
   loadTradingView(document.getElementById('tvSymbol')?.value);
-})();
+_code})new(</);)();

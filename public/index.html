@@ -316,6 +316,11 @@
                         <option value="account">Group by Account</option>
                         <option value="account_day">Group by Account + Day</option>
                         <option value="account_month">Group by Account + Month</option>
+                        <option value="account_month_category">Account / Month / Category</option>
+                        <option value="type_month">Type / Month</option>
+                        <option value="type_account_month">Type / Account / Month</option>
+                        <option value="category_month">Category / Month</option>
+                        <option value="category_account_month">Category / Account / Month</option>
                       </select>
                     </div>
                     <div class="grid grid-cols-2 gap-2 mt-1">
@@ -346,10 +351,12 @@
             </div>
             <div class="mt-2 flex flex-wrap items-center gap-2">
               <input id="n8nLogsLimit" type="number" min="1" max="500" value="50" class="border rounded px-2 py-1 text-sm w-24" />
+              <input id="n8nLogsToken" placeholder="Token (optional)" class="border rounded px-2 py-1 text-sm w-48" />
               <button id="n8nLogsRefresh" class="bg-slate-700 text-white rounded-lg px-3 py-1.5 text-sm">Refresh</button>
               <button id="n8nLogsPrev" class="border rounded-lg px-3 py-1.5 text-sm">Prev</button>
               <button id="n8nLogsNext" class="border rounded-lg px-3 py-1.5 text-sm">Next</button>
               <button id="n8nLogsClear" class="border rounded-lg px-3 py-1.5 text-sm">Clear</button>
+              <button id="n8nLogsDownload" class="border rounded-lg px-3 py-1.5 text-sm">Download JSONL</button>
               <button id="n8nLogsLiveBtn" class="bg-brand-600 text-white rounded-lg px-3 py-1.5 text-sm">Start Live</button>
               <span id="n8nLogsLiveStatus" class="text-xs text-slate-500 ml-2">Idle</span>
             </div>
