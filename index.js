@@ -14,6 +14,16 @@ app.use(cors());
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Swagger UI
+try {
+  const swaggerUi = require('swagger-ui-express');
+  const openapi = require(path.join(__dirname, 'docs', 'openapi.json'));
+  app.get('/openapi.json', (req, res) => res.json(openapi));
+  app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
+} catch (e) {
+  // swagger is optional; ignore if missing
+}
+
 const DATA_DIR = path.join(__dirname, 'data');
 const DB_FILE = path.join(DATA_DIR, 'db.json');
 

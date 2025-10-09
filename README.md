@@ -93,6 +93,24 @@ Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Se
   - Provider dropdown: OpenAI, Anthropic, Gemini, Deepseek, Qwen
   - Model box optional — leave blank to use defaults
 
+## API Documentation (Swagger)
+
+- Swagger UI: visit /api-docs
+  - Local: http://localhost:3000/api-docs
+  - Vercel: https://your-app.vercel.app/api-docs
+- OpenAPI JSON: /openapi.json (can be imported into Postman/Insomnia)
+
+The spec includes:
+- Wallet (accounts, transactions, holdings)
+- Categories & Budgets
+- Rules (auto-categorization)
+- Reports (budget, overspend)
+- Import/Export (CSV/QIF/OFX, bulk ZIP)
+- Sentiment
+- n8n (webhooks, logs, SSE, clear)
+
+To update the spec, edit docs/openapi.json.
+
 ## REST Endpoints
 
 Wallet

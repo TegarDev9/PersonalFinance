@@ -1,0 +1,464 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "FinDash API",
+    "version": "1.0.0",
+    "description": "Personal finance, trading, sentiment, AI and n8n integration API.\n\nNotes:\n- Most write endpoints require persistence configured (Vercel KV / Upstash). Without KV, data may not persist on serverless environments.\n- Logs endpoints can be protected via LOGS_AUTH_TOKEN and support token in query (?token=), header (X-Logs-Token) or Authorization: Bearer."
+  },
+  "servers": [
+    { "url": "http://localhost:3000" },
+    { "url": "https://your-app.vercel.app" }
+  ],
+  "tags": [
+    { "name": "Wallet" },
+    { "name": "Categories" },
+    { "name": "Budgets" },
+    { "name": "Rules" },
+    { "name": "Reports" },
+    { "name": "Import/Export" },
+    { "name": "Sentiment" },
+    { "name": "n8n" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "logsTokenQuery": { "type": "apiKey", "in": "query", "name": "token" },
+      "logsTokenHeader": { "type": "apiKey", "in": "header", "name": "X-Logs-Token" },
+      "bearerAuth": { "type": "http", "scheme": "bearer" }
+    },
+    "schemas": {
+      "Account": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["cash","bank","brokerage","credit"] },
+          "balance": { "type": "number" }
+        },
+        "required": ["id","name","type","balance"]
+      },
+      "Transaction": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "date": { "type": "string", "format": "date" },
+          "accountId": { "type": "string" },
+          "type": { "type": "string", "enum": ["income","expense","transfer"] },
+          "category": { "type": "string" },
+          "categoryId": { "type": "string" },
+          "amount": { "type": "number" },
+          "note": { "type": "string" }
+        },
+        "required": ["id","date","accountId","type","amount"]
+      },
+      "Holding": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "symbol": { "type": "string" },
+          "quantity": { "type": "number" },
+          "avgPrice": { "type": "number" }
+        },
+        "required": ["id","symbol"]
+      },
+      "Category": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "type": "string", "enum": ["income","expense","transfer"] },
+          "parentId": { "type": "string", "nullable": true }
+        },
+        "required": ["id","name","type"]
+      },
+      "Budget": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "categoryId": { "type": "string" },
+          "month": { "type": "string", "example": "2025-01" },
+          "amount": { "type": "number" }
+        },
+        "required": ["id","categoryId","month","amount"]
+      },
+      "Rule": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "keywords": { "type": "array", "items": { "type": "string" } },
+          "categoryId": { "type": "string" },
+          "type": { "type": "string", "enum": ["income","expense","transfer"] },
+          "priority": { "type": "integer" },
+          "amountMin": { "type": "number" },
+          "amountMax": { "type": "number" },
+          "accounts": { "type": "array", "items": { "type": "string" } },
+          "regex": { "type": "string" },
+          "regexFlags": { "type": "string" }
+        },
+        "required": ["id","name","categoryId"]
+      },
+      "BudgetReportItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "categoryId": { "type": "string" },
+          "categoryName": { "type": "string" },
+          "month": { "type": "string" },
+          "budget": { "type": "number" },
+          "spent": { "type": "number" },
+          "remaining": { "type": "number" },
+          "percent": { "type": "number" }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/api/wallet/summary": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "Get wallet summary",
+        "responses": {
+          "200": {
+            "description": "Summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "currency": { "type": "string" },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "cash": { "type": "number" },
+                        "invested": { "type": "number" },
+                        "netWorth": { "type": "number" }
+                      }
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "accounts": { "type": "number" },
+                        "transactions": { "type": "number" },
+                        "holdings": { "type": "number" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/wallet/accounts": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "List accounts",
+        "responses": {
+          "200": {
+            "description": "Array of accounts",
+            "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Account" } } } }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Create account",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" }, "type": { "type": "string" }, "balance": { "type": "number" } }, "required": ["name"] } } }
+        },
+        "responses": {
+          "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } }
+        }
+      }
+    },
+    "/api/wallet/accounts/{id}": {
+      "patch": {
+        "tags": ["Wallet"],
+        "summary": "Update account",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } } }
+      },
+      "delete": {
+        "tags": ["Wallet"],
+        "summary": "Delete account",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Deleted" } }
+      }
+    },
+    "/api/wallet/transactions": {
+      "get": {
+        "tags": ["Wallet"],
+        "summary": "List transactions",
+        "parameters": [
+          { "in": "query", "name": "accountId", "schema": { "type": "string" } },
+          { "in": "query", "name": "category", "schema": { "type": "string" } },
+          { "in": "query", "name": "type", "schema": { "type": "string", "enum": ["income","expense","transfer"] } },
+          { "in": "query", "name": "month", "schema": { "type": "string", "example": "2025-01" } },
+          { "in": "query", "name": "startMonth", "schema": { "type": "string" } },
+          { "in": "query", "name": "endMonth", "schema": { "type": "string" } },
+          { "in": "query", "name": "startDate", "schema": { "type": "string", "format": "date" } },
+          { "in": "query", "name": "endDate", "schema": { "type": "string", "format": "date" } },
+          { "in": "query", "name": "minAmount", "schema": { "type": "number" } },
+          { "in": "query", "name": "maxAmount", "schema": { "type": "number" } },
+          { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 100 } }
+        ],
+        "responses": { "200": { "description": "Array of transactions", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Transaction" } } } } } }
+      },
+      "post": {
+        "tags": ["Wallet"],
+        "summary": "Create transaction",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "date": { "type": "string", "format": "date" }, "accountId": { "type": "string" }, "type": { "type": "string" }, "category": { "type": "string" }, "categoryId": { "type": "string" }, "amount": { "type": "number" }, "note": { "type": "string" } }, "required": ["date","accountId","type","amount"] } } }
+        },
+        "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Transaction" } } } } }
+      }
+    },
+    "/api/wallet/holdings": {
+      "get": { "tags": ["Wallet"], "summary": "List holdings", "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Holding" } } } } } } },
+      "post": {
+        "tags": ["Wallet"], "summary": "Create holding",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "symbol": { "type": "string" }, "quantity": { "type": "number" }, "avgPrice": { "type": "number" } }, "required": ["symbol"] } } } },
+        "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Holding" } } } } }
+      }
+    },
+    "/api/categories": {
+      "get": { "tags": ["Categories"], "summary": "List categories", "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Category" } } } } } } },
+      "post": {
+        "tags": ["Categories"], "summary": "Create category",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" }, "type": { "type": "string" }, "parentId": { "type": "string" } }, "required": ["name"] } } } },
+        "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Category" } } } } }
+      }
+    },
+    "/api/categories/{id}": {
+      "patch": {
+        "tags": ["Categories"], "summary": "Update category",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Category" } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Category" } } } } }
+      },
+      "delete": {
+        "tags": ["Categories"], "summary": "Delete category",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Deleted" } }
+      }
+    },
+    "/api/categories/restore": {
+      "post": {
+        "tags": ["Categories"], "summary": "Restore a deleted category with budgets",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "category": { "$ref": "#/components/schemas/Category" }, "budgets": { "type": "array", "items": { "$ref": "#/components/schemas/Budget" } } }, "required": ["category"] } } } },
+        "responses": { "200": { "description": "Restored" } }
+      }
+    },
+    "/api/budgets": {
+      "get": {
+        "tags": ["Budgets"], "summary": "List budgets (optionally filter by month)",
+        "parameters": [{ "in": "query", "name": "month", "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Budget" } } } } } }
+      },
+      "post": {
+        "tags": ["Budgets"], "summary": "Create budget",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "categoryId": { "type": "string" }, "month": { "type": "string" }, "amount": { "type": "number" } }, "required": ["categoryId","month"] } } } },
+        "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Budget" } } } } }
+      }
+    },
+    "/api/budgets/{id}": {
+      "patch": {
+        "tags": ["Budgets"], "summary": "Update budget",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Budget" } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Budget" } } } } }
+      },
+      "delete": {
+        "tags": ["Budgets"], "summary": "Delete budget",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Deleted" } }
+      }
+    },
+    "/api/budgets/restore": {
+      "post": {
+        "tags": ["Budgets"], "summary": "Restore budget",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "budget": { "$ref": "#/components/schemas/Budget" } }, "required": ["budget"] } } } },
+        "responses": { "200": { "description": "Restored" } }
+      }
+    },
+    "/api/rules": {
+      "get": { "tags": ["Rules"], "summary": "List rules", "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Rule" } } } } } } },
+      "post": {
+        "tags": ["Rules"], "summary": "Create rule",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rule" } } } },
+        "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rule" } } } } }
+      }
+    },
+    "/api/rules/{id}": {
+      "patch": {
+        "tags": ["Rules"], "summary": "Update rule",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rule" } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rule" } } } } }
+      },
+      "delete": {
+        "tags": ["Rules"], "summary": "Delete rule",
+        "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Deleted" } }
+      }
+    },
+    "/api/reports/budget": {
+      "get": {
+        "tags": ["Reports"], "summary": "Budget report for a month",
+        "parameters": [{ "in": "query", "name": "month", "required": true, "schema": { "type": "string", "example": "2025-01" } }],
+        "responses": {
+          "200": {
+            "description": "Report",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "month": { "type": "string" }, "items": { "type": "array", "items": { "$ref": "#/components/schemas/BudgetReportItem" } } } } } }
+          }
+        }
+      }
+    },
+    "/api/budget/overspend": {
+      "get": {
+        "tags": ["Reports"], "summary": "Overspending list for a month",
+        "parameters": [{ "in": "query", "name": "month", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Overs", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    },
+    "/api/import/transactions": {
+      "post": {
+        "tags": ["Import/Export"],
+        "summary": "Import transactions (CSV/OFX/QIF parsed on client)",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "properties": { "records": { "type": "array", "items": { "type": "object" } }, "mapping": { "type": "object" }, "autoCategorize": { "type": "boolean", "default": true } }, "required": ["records"] } } }
+        },
+        "responses": { "200": { "description": "Import result", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    },
+    "/api/export/transactions.csv": {
+      "get": {
+        "tags": ["Import/Export"], "summary": "Export CSV",
+        "parameters": [
+          { "in": "query", "name": "accountId", "schema": { "type": "string" } },
+          { "in": "query", "name": "month", "schema": { "type": "string" } },
+          { "in": "query", "name": "startMonth", "schema": { "type": "string" } },
+          { "in": "query", "name": "endMonth", "schema": { "type": "string" } },
+          { "in": "query", "name": "startDate", "schema": { "type": "string", "format": "date" } },
+          { "in": "query", "name": "endDate", "schema": { "type": "string", "format": "date" } },
+          { "in": "query", "name": "type", "schema": { "type": "string" } },
+          { "in": "query", "name": "minAmount", "schema": { "type": "number" } },
+          { "in": "query", "name": "maxAmount", "schema": { "type": "number" } }
+        ],
+        "responses": { "200": { "description": "CSV", "content": { "text/csv": { "schema": { "type": "string" } } } } }
+      }
+    },
+    "/api/export/transactions.qif": {
+      "get": {
+        "tags": ["Import/Export"], "summary": "Export QIF",
+        "parameters": [
+          { "in": "query", "name": "accountId", "schema": { "type": "string" } },
+          { "in": "query", "name": "month", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "QIF", "content": { "application/x-qif": { "schema": { "type": "string" } } } } }
+      }
+    },
+    "/api/export/transactions.ofx": {
+      "get": {
+        "tags": ["Import/Export"], "summary": "Export OFX",
+        "parameters": [
+          { "in": "query", "name": "accountId", "schema": { "type": "string" } },
+          { "in": "query", "name": "month", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "OFX", "content": { "application/x-ofx": { "schema": { "type": "string" } } } } }
+      }
+    },
+    "/api/export/bulk.zip": {
+      "get": {
+        "tags": ["Import/Export"], "summary": "Bulk ZIP export",
+        "parameters": [
+          { "in": "query", "name": "mode", "schema": { "type": "string", "enum": ["month","day","category","account","account_day","account_month","account_month_category","type_month","type_account_month","category_month","category_account_month"] }, "description": "Grouping mode" },
+          { "in": "query", "name": "format", "schema": { "type": "string", "enum": ["csv","qif","ofx"], "default": "csv" } },
+          { "in": "query", "name": "accountId", "schema": { "type": "string" } },
+          { "in": "query", "name": "month", "schema": { "type": "string" } },
+          { "in": "query", "name": "startMonth", "schema": { "type": "string" } },
+          { "in": "query", "name": "endMonth", "schema": { "type": "string" } },
+          { "in": "query", "name": "startDate", "schema": { "type": "string", "format": "date" } },
+          { "in": "query", "name": "endDate", "schema": { "type": "string", "format": "date" } },
+          { "in": "query", "name": "type", "schema": { "type": "string" } },
+          { "in": "query", "name": "minAmount", "schema": { "type": "number" } },
+          { "in": "query", "name": "maxAmount", "schema": { "type": "number" } }
+        ],
+        "responses": { "200": { "description": "ZIP", "content": { "application/zip": { "schema": { "type": "string", "format": "binary" } } } } }
+      }
+    },
+    "/api/sentiment/analyze": {
+      "post": {
+        "tags": ["Sentiment"],
+        "summary": "Analyze sentiment",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "provider": { "type": "string", "enum": ["vader","google","finbert","finnhub"] }, "text": { "type": "string" }, "symbol": { "type": "string" }, "from": { "type": "string", "format": "date" }, "type": { "type": "string", "enum": ["social","news"] } }, "required": ["provider"] } } } },
+        "responses": { "200": { "description": "Result", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    },
+    "/webhooks/n8n": {
+      "post": {
+        "tags": ["n8n"], "summary": "Receive n8n webhook (log entry)",
+        "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
+    "/n8n/forward": {
+      "post": {
+        "tags": ["n8n"], "summary": "Forward JSON to n8n webhook URL",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string" }, "data": { "type": "object" } } } } } },
+        "responses": { "200": { "description": "Forward status" } }
+      }
+    },
+    "/webhooks/n8n/logs": {
+      "get": {
+        "tags": ["n8n"], "summary": "List logs (newest-first)",
+        "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "parameters": [
+          { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 50 } },
+          { "in": "query", "name": "offset", "schema": { "type": "integer", "default": 0 } },
+          { "in": "query", "name": "token", "schema": { "type": "string" }, "description": "If LOGS_AUTH_TOKEN enabled" }
+        ],
+        "responses": { "200": { "description": "Logs", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      }
+    },
+    "/webhooks/n8n/logs.jsonl": {
+      "get": {
+        "tags": ["n8n"], "summary": "Download logs as JSONL",
+        "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "parameters": [
+          { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 1000 } },
+          { "in": "query", "name": "offset", "schema": { "type": "integer", "default": 0 } },
+          { "in": "query", "name": "token", "schema": { "type": "string" } }
+        ],
+        "responses": { "200": { "description": "NDJSON", "content": { "application/x-ndjson": { "schema": { "type": "string" } } } } }
+      }
+    },
+    "/webhooks/n8n/logs/stream": {
+      "get": {
+        "tags": ["n8n"], "summary": "Live logs via SSE",
+        "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "parameters": [{ "in": "query", "name": "token", "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "SSE stream", "content": { "text/event-stream": { "schema": { "type": "string" } } } } }
+      }
+    },
+    "/webhooks/n8n/logs/clear": {
+      "post": {
+        "tags": ["n8n"], "summary": "Clear logs",
+        "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "responses": { "200": { "description": "Cleared" } }
+      }
+    },
+    "/webhooks/n8n/logs": {
+      "delete": {
+        "tags": ["n8n"], "summary": "Clear logs (DELETE)",
+        "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "responses": { "200": { "description": "Cleared" } }
+      }
+    }
+  }
+}
