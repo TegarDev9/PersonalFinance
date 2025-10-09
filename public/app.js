@@ -173,6 +173,70 @@ function renderOverview(accounts) {
   });
 }
 
+/* Undo/Redo */
+state.undoStack = [];
+state.redoStack = [];
+
+function pushUndo(action) {
+  state.undoStack.push(action);
+  state.redoStack = [];
+  updateUndoBar();
+}
+
+async function doUndo() {
+  const a = state.undoStack.pop();
+  if (!a) return;
+  if (a.type === 'delete_category') {
+    await jsonFetch('/api/categories/restore', {
+      method: 'POST',
+      body: JSON.stringify({ category: a.item, budgets: a.removedBudgets || [] })
+    });
+    await loadCategories();
+    await loadBudgetReport();
+  } else if (a.type === 'delete_budget') {
+    await jsonFetch('/api/budgets/restore', {
+      method: 'POST',
+      body: JSON.stringify({ budget: a.item })
+    });
+    await loadBudgetReport();
+  }
+  state.redoStack.push(a);
+  updateUndoBar();
+}
+
+async function doRedo() {
+  const a = state.redoStack.pop();
+  if (!a) return;
+  if (a.type === 'delete_category') {
+    await jsonFetch(`/api/categories/${encodeURIComponent(a.item.id)}`, { method: 'DELETE' });
+    await loadCategories();
+    await loadBudgetReport();
+  } else if (a.type === 'delete_budget') {
+    await jsonFetch(`/api/budgets/${encodeURIComponent(a.item.id)}`, { method: 'DELETE' });
+    await loadBudgetReport();
+  }
+  state.undoStack.push(a);
+  updateUndoBar();
+}
+
+function updateUndoBar() {
+  const bar = document.getElementById('undoBar');
+  if (!bar) return;
+  const has = state.undoStack.length > 0 || state.redoStack.length > 0;
+  bar.classList.toggle('hidden', !has);
+}
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault();
+    doUndo();
+  } else if (e.ctrlKey && (e.key === 'y' || e.key === 'Y')) {
+    e.preventDefault();
+    doRedo();
+  }
+});
+document.getElementById('undoBtn')?.addEventListener('click', doUndo);
+document.getElementById('redoBtn')?.addEventListener('click', doRedo);
+
 /* Categories & Budgets */
 function initBudgetMonth() {
   const m = document.getElementById('budMonth');
@@ -206,7 +270,19 @@ async function loadCategories() {
         sel.appendChild(opt);
       });
   }
+  // fill rule category select
+  const ruleSel = document.getElementById('ruleCategory');
+  if (ruleSel) {
+    ruleSel.innerHTML = '';
+    state.categories.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = `${c.name} (${c.type})`;
+      ruleSel.appendChild(opt);
+    });
+  }
   renderCategoryList();
+  loadRules();
 }
 
 function renderCategoryList() {
@@ -217,14 +293,84 @@ function renderCategoryList() {
     const row = document.createElement('div');
     row.className = 'py-2';
     row.innerHTML = `
-     < div class="flex items-center justify-between">
-       < div>
-         < div class="font-medium text-slate-800">${c.na}</mediv>
-         < div class="text-xs text-slate-500">${c.ty}</pediv>
-      </  div>
-       < div class="flex gap-2">
-         < button class="px-2 py-1 border rounded text-xs cat-edit
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-medium text-slate-800">${c.name}</div>
+          <div class="text-xs text-slate-500">${c.type}</div>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-2 py-1 border rounded text-xs cat-edit" title="Edit (E)">Edit</button>
+          <button class="px-2 py-1 border rounded text-xs cat-delete" title="Delete (Del)">Delete</button>
+        </div>
+      </div>
+      <div class="mt-2 hidden cat-edit-form">
+        <div class="flex items-center gap-2">
+          <input type="text" class="border rounded px-2 py-1 text-sm cat-name" value="${c.name}">
+          <select class="border rounded px-2 py-1 text-sm cat-type">
+            <option value="expense" ${c.type === 'expense' ? 'selected' : ''}>Expense</option>
+            <option value="income" ${c.type === 'income' ? 'selected' : ''}>Income</option>
+            <option value="transfer" ${c.type === 'transfer' ? 'selected' : ''}>Transfer</option>
+          </select>
+          <button class="px-2 py-1 bg-brand-600 text-white rounded text-xs cat-save">Save</button>
+          <button class="px-2 py-1 border rounded text-xs cat-cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+    // attach events
+    const btnEdit = row.querySelector('.cat-edit');
+    const btnDelete = row.querySelector('.cat-delete');
+    const editForm = row.querySelector('.cat-edit-form');
+    const btnSave = row.querySelector('.cat-save');
+    const btnCancel = row.querySelector('.cat-cancel');
+    const nameInput = row.querySelector('.cat-name');
+    const typeSel = row.querySelector('.cat-type');
 
+    row.tabIndex = 0;
+    row.addEventListener('keydown', async (e) => {
+      if (e.key.toLowerCase() === 'e') {
+        editForm.classList.remove('hidden');
+      } else if (e.key === 'Delete') {
+        btnDelete.click();
+      }
+    });
+
+    btnEdit.addEventListener('click', () => {
+      editForm.classList.toggle('hidden', false);
+    });
+    btnCancel.addEventListener('click', () => {
+      editForm.classList.toggle('hidden', true);
+      nameInput.value = c.name;
+      typeSel.value = c.type;
+    });
+    btnSave.addEventListener('click', async () => {
+      const body = { name: nameInput.value.trim(), type: typeSel.value };
+      const res = await jsonFetch(`/api/categories/${encodeURIComponent(c.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      });
+      if (res && !res.error) {
+        await loadCategories();
+      } else {
+        alert(res.error || 'Failed to update category');
+      }
+    });
+    btnDelete.addEventListener('click', async () => {
+      if (!confirm(`Delete category "${c.name}"? This will also remove budgets for it.`)) return;
+      const res = await jsonFetch(`/api/categories/${encodeURIComponent(c.id)}`, { method: 'DELETE' });
+      if (res && !res.error) {
+        pushUndo({ type: 'delete_category', item: res.removed, removedBudgets: res.removedBudgets || [] });
+        await loadCategories();
+        await loadBudgetReport();
+      } else {
+        alert(res.error || 'Failed to delete category');
+      }
+    });
+
+    wrap.appendChild(row);
+  });
+}
+
+/* Add category */
 document.getElementById('addCategoryForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
@@ -243,6 +389,7 @@ document.getElementById('budMonth')?.addEventListener('change', () => {
   loadBudgetReport();
 });
 
+/* Add budget */
 document.getElementById('addBudgetForm')?.addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
@@ -258,28 +405,102 @@ document.getElementById('addBudgetForm')?.addEventListener('submit', async (e) =
   }
 });
 
+/* Budget report with edit/delete and summary */
 async function loadBudgetReport() {
   const month = state.month || monthVal();
   const res = await jsonFetch(`/api/reports/budget?month=${encodeURIComponent(month)}`);
   const list = document.getElementById('budgetList');
   const oversEl = document.getElementById('overspendList');
+  const summaryEl = document.getElementById('budgetSummary');
   if (!list) return;
   list.innerHTML = '';
   const items = res?.items || [];
+
+  // Summary
+  if (summaryEl) {
+    const totalBudget = items.reduce((s, it) => s + (it.budget || 0), 0);
+    const totalSpent = items.reduce((s, it) => s + (it.spent || 0), 0);
+    const remaining = totalBudget - totalSpent;
+    const pct = totalBudget > 0 ? Math.min(100, Math.round((totalSpent / totalBudget) * 100)) : (totalSpent > 0 ? 100 : 0);
+    summaryEl.textContent = `This month: Spent ${totalSpent.toFixed(2)} / Budget ${totalBudget.toFixed(2)} • Remaining ${remaining.toFixed(2)} • ${pct}% used`;
+  }
+
+  // Rows
   items.forEach(it => {
     const pct = it.percent || 0;
     const row = document.createElement('div');
     row.className = 'p-3 bg-white border rounded-lg';
+    row.tabIndex = 0;
+    row.dataset.bid = it.id;
     row.innerHTML = `
       <div class="flex items-center justify-between">
         <div class="font-medium text-slate-800">${it.categoryName}</div>
-        <div class="text-sm text-slate-600">${it.spent.toFixed(2)} / ${it.budget.toFixed(2)}</div>
+        <div class="flex items-center gap-2">
+          <div class="text-sm text-slate-600"><span class="spent-val">${it.spent.toFixed(2)}</span> / <span class="budget-val">${it.budget.toFixed(2)}</span></div>
+          <button class="px-2 py-1 border rounded text-xs bud-edit" title="Edit (E)">Edit</button>
+          <button class="px-2 py-1 border rounded text-xs bud-delete" title="Delete (Del)">Delete</button>
+        </div>
       </div>
       <div class="w-full h-2 bg-slate-100 rounded mt-2 overflow-hidden">
         <div class="h-2 ${it.spent > it.budget ? 'bg-red-500' : 'bg-brand-600'}" style="width: ${pct}%;"></div>
       </div>
       <div class="text-xs text-slate-500 mt-1">${pct}% used · Remaining ${it.remaining.toFixed(2)}</div>
+      <div class="mt-2 hidden bud-edit-form">
+        <div class="flex items-center gap-2">
+          <input type="number" step="0.01" class="border rounded px-2 py-1 text-sm bud-amount" value="${it.budget.toFixed(2)}">
+          <button class="px-2 py-1 bg-brand-600 text-white rounded text-xs bud-save">Save</button>
+          <button class="px-2 py-1 border rounded text-xs bud-cancel">Cancel</button>
+        </div>
+      </div>
     `;
+    const editBtn = row.querySelector('.bud-edit');
+    const delBtn = row.querySelector('.bud-delete');
+    const form = row.querySelector('.bud-edit-form');
+    const amountInput = row.querySelector('.bud-amount');
+    const saveBtn = row.querySelector('.bud-save');
+    const cancelBtn = row.querySelector('.bud-cancel');
+
+    row.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'e') {
+        form.classList.remove('hidden');
+        amountInput.focus();
+      } else if (e.key === 'Delete') {
+        delBtn.click();
+      }
+    });
+
+    editBtn.addEventListener('click', () => {
+      form.classList.remove('hidden');
+      amountInput.focus();
+    });
+    cancelBtn.addEventListener('click', () => {
+      form.classList.add('hidden');
+      amountInput.value = it.budget.toFixed(2);
+    });
+    saveBtn.addEventListener('click', async () => {
+      const amt = Number(amountInput.value || 0);
+      const r = await jsonFetch(`/api/budgets/${encodeURIComponent(it.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ amount: amt })
+      });
+      if (r && !r.error) {
+        form.classList.add('hidden');
+        loadBudgetReport();
+      } else {
+        alert(r.error || 'Failed to update budget');
+      }
+    });
+    delBtn.addEventListener('click', async () => {
+      if (!confirm(`Delete budget for "${it.categoryName}" (${month})?`)) return;
+      const r = await jsonFetch(`/api/budgets/${encodeURIComponent(it.id)}`, { method: 'DELETE' });
+      if (r && !r.error) {
+        pushUndo({ type: 'delete_budget', item: r.removed });
+        loadBudgetReport();
+      } else {
+        alert(r.error || 'Failed to delete budget');
+      }
+    });
+
     list.appendChild(row);
   });
 
@@ -299,6 +520,269 @@ async function loadBudgetReport() {
     }
   }
 }
+
+/* Rules */
+async function loadRules() {
+  const data = await jsonFetch('/api/rules');
+  state.rules = Array.isArray(data) ? data : [];
+  renderRulesList();
+}
+
+function renderRulesList() {
+  const list = document.getElementById('rulesList');
+  if (!list) return;
+  list.innerHTML = '';
+  (state.rules || []).forEach(r => {
+    const cat = state.categories.find(c => c.id === r.categoryId);
+    const row = document.createElement('div');
+    row.className = 'py-2';
+    row.innerHTML = `
+      <div class="flex items-center justify-between">
+        <div>
+          <div class="font-medium text-slate-800">${r.name}</div>
+          <div class="text-xs text-slate-500">Keywords: ${(r.keywords || []).join(', ')} • Category: ${cat ? cat.name : r.categoryId} • Priority: ${r.priority || 0}</div>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-2 py-1 border rounded text-xs rule-edit">Edit</button>
+          <button class="px-2 py-1 border rounded text-xs rule-delete">Delete</button>
+        </div>
+      </div>
+      <div class="mt-2 hidden rule-edit-form">
+        <div class="grid grid-cols-4 gap-2">
+          <input type="text" class="border rounded px-2 py-1 text-sm rule-name" value="${r.name}">
+          <input type="text" class="border rounded px-2 py-1 text-sm rule-kws" value="${(r.keywords || []).join(', ')}">
+          <select class="border rounded px-2 py-1 text-sm rule-cat">${state.categories.map(c => `<option value="${c.id}" ${c.id===r.categoryId?'selected':''}>${c.name}</option>`).join('')}</select>
+          <div class="flex items-center gap-2">
+            <input type="number" step="1" class="border rounded px-2 py-1 text-sm rule-pri" value="${r.priority || 0}" style="width:100%;">
+          </div>
+        </div>
+        <div class="mt-2 flex gap-2">
+          <button class="px-2 py-1 bg-brand-600 text-white rounded text-xs rule-save">Save</button>
+          <button class="px-2 py-1 border rounded text-xs rule-cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+    const btnEdit = row.querySelector('.rule-edit');
+    const btnDelete = row.querySelector('.rule-delete');
+    const form = row.querySelector('.rule-edit-form');
+    const btnSave = row.querySelector('.rule-save');
+    const btnCancel = row.querySelector('.rule-cancel');
+    const nameInput = row.querySelector('.rule-name');
+    const kwInput = row.querySelector('.rule-kws');
+    const catSel = row.querySelector('.rule-cat');
+    const priInput = row.querySelector('.rule-pri');
+
+    btnEdit.addEventListener('click', () => form.classList.remove('hidden'));
+    btnCancel.addEventListener('click', () => form.classList.add('hidden'));
+    btnSave.addEventListener('click', async () => {
+      const payload = {
+        name: nameInput.value.trim(),
+        keywords: kwInput.value,
+        categoryId: catSel.value,
+        priority: Number(priInput.value || 0)
+      };
+      const res = await jsonFetch(`/api/rules/${encodeURIComponent(r.id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload)
+      });
+      if (res && !res.error) {
+        await loadRules();
+      } else {
+        alert(res.error || 'Failed to update rule');
+      }
+    });
+    btnDelete.addEventListener('click', async () => {
+      if (!confirm(`Delete rule "${r.name}"?`)) return;
+      const res = await jsonFetch(`/api/rules/${encodeURIComponent(r.id)}`, { method: 'DELETE' });
+      if (res && !res.error) {
+        await loadRules();
+      } else {
+        alert(res.error || 'Failed to delete rule');
+      }
+    });
+
+    list.appendChild(row);
+  });
+}
+
+document.getElementById('addRuleForm')?.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const body = Object.fromEntries(fd.entries());
+  body.priority = Number(body.priority || 0);
+  const res = await jsonFetch('/api/rules', { method: 'POST', body: JSON.stringify(body) });
+  if (res && !res.error) {
+    e.target.reset();
+    await loadRules();
+  } else {
+    alert(res.error || 'Failed to add rule');
+  }
+});
+
+/* Import CSV/OFX/QIF */
+function fillMappingOptions(headers = []) {
+  const ids = ['mapDate','mapAccount','mapType','mapAmount','mapCategory','mapNote','mapDescription'];
+  ids.forEach(id => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    sel.innerHTML = '<option value=""></option>';
+    headers.forEach(h => {
+      const opt = document.createElement('option');
+      opt.value = h;
+      opt.textContent = h;
+      sel.appendChild(opt);
+    });
+  });
+  // preselect common
+  const trySet = (id, names) => {
+    const sel = document.getElementById(id);
+    if (!sel) return;
+    for (const n of names) {
+      const opt = Array.from(sel.options).find(o => o.value.toLowerCase() === n.toLowerCase());
+      if (opt) { sel.value = opt.value; break; }
+    }
+  };
+  trySet('mapDate', ['date','Date','DTPOSTED','D']);
+  trySet('mapAmount', ['amount','Amount','TRNAMT','T']);
+  trySet('mapType', ['type','Type','TRNTYPE']);
+  trySet('mapAccount', ['account','Account']);
+  trySet('mapCategory', ['category','Category','L']);
+  trySet('mapNote', ['note','Note','MEMO','M']);
+  trySet('mapDescription', ['description','Description','NAME','P']);
+}
+
+function parseOFX(text) {
+  const recs = [];
+  const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
+  for (const b of blocks) {
+    const get = (tag) => {
+      const m = b.match(new RegExp(`<${tag}>([^<\n\r]+)`,'i'));
+      return m ? m[1].trim() : '';
+    };
+    const dt = get('DTPOSTED');
+    const amt = get('TRNAMT');
+    const name = get('NAME');
+    const memo = get('MEMO');
+    let date = dt && /^\d{8,14}$/.test(dt) ? `${dt.slice(0,4)}-${dt.slice(4,6)}-${dt.slice(6,8)}` : '';
+    recs.push({
+      date,
+      amount: amt,
+      type: get('TRNTYPE'),
+      description: name || memo || '',
+      note: memo || '',
+      account: 'OFX'
+    });
+  }
+  return recs;
+}
+
+function parseQIF(text) {
+  const recs = [];
+  const lines = text.split(/\r?\n/);
+  let cur = {};
+  for (const line of lines) {
+    if (line === '^') {
+      if (cur.D || cur.date) {
+        // build
+        let d = cur.D || cur.date;
+        if (d && /^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(d)) {
+          const parts = d.split(/[\/']/);
+          const mm = parts[0].padStart(2,'0');
+          const dd = parts[1].padStart(2,'0');
+          let yy = parts[2];
+          if (yy.length === 2) yy = `20${yy}`;
+          d = `${yy}-${mm}-${dd}`;
+        }
+        recs.push({
+          date: d || '',
+          amount: cur.T || cur.amount || '',
+          type: cur.type || '',
+          description: cur.P || cur.NAME || '',
+          note: cur.M || '',
+          category: cur.L || '',
+          account: 'QIF'
+        });
+      }
+      cur = {};
+      continue;
+    }
+    if (!line) continue;
+    const ch = line[0];
+    const val = line.slice(1);
+    cur[ch] = val;
+  }
+  return recs;
+}
+
+document.getElementById('csvFile')?.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (ext === 'csv') {
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: (res) => {
+        state.csvRecords = res.data || [];
+        state.csvHeaders = res.meta?.fields || Object.keys(state.csvRecords[0] || {});
+        fillMappingOptions(state.csvHeaders);
+        document.getElementById('csvPreview').textContent = JSON.stringify(state.csvRecords.slice(0, 10), null, 2);
+      }
+    });
+  } else {
+    const text = await file.text();
+    let recs = [];
+    if (ext === 'ofx') recs = parseOFX(text);
+    else if (ext === 'qif') recs = parseQIF(text);
+    else {
+      alert('Unsupported file type. Use CSV, OFX, or QIF.');
+      return;
+    }
+    state.csvRecords = recs;
+    state.csvHeaders = Object.keys(recs[0] || {});
+    fillMappingOptions(state.csvHeaders);
+    document.getElementById('csvPreview').textContent = JSON.stringify(state.csvRecords.slice(0, 10), null, 2);
+  }
+});
+
+document.getElementById('csvPreviewBtn')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  document.getElementById('csvPreview').textContent = JSON.stringify(state.csvRecords.slice(0, 10), null, 2);
+});
+
+document.getElementById('csvImportBtn')?.addEventListener('click', async (e) => {
+  e.preventDefault();
+  if (!state.csvRecords.length) {
+    alert('No records to import');
+    return;
+  }
+  const mapping = {
+    date: document.getElementById('mapDate')?.value || '',
+    account: document.getElementById('mapAccount')?.value || '',
+    type: document.getElementById('mapType')?.value || '',
+    amount: document.getElementById('mapAmount')?.value || '',
+    category: document.getElementById('mapCategory')?.value || '',
+    note: document.getElementById('mapNote')?.value || '',
+    description: document.getElementById('mapDescription')?.value || ''
+  };
+  const autoCategorize = !!document.getElementById('csvAutoCategorize')?.checked;
+  const res = await jsonFetch('/api/import/transactions', {
+    method: 'POST',
+    body: JSON.stringify({ records: state.csvRecords, mapping, autoCategorize })
+  });
+  if (res && !res.error) {
+    alert(`Imported ${res.imported} transactions`);
+    state.csvRecords = [];
+    state.csvHeaders = [];
+    document.getElementById('csvFile').value = '';
+    document.getElementById('csvPreview').textContent = '';
+    loadTransactions();
+    refreshSummary();
+    loadBudgetReport();
+  } else {
+    alert(res.error || 'Import failed');
+  }
+});
 
 /* TradingView */
 function loadTradingView(sym) {

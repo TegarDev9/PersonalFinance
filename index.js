@@ -34,6 +34,9 @@ const DEFAULT_DB = {
   ],
   budgets: [
     // { id: 'bud_xxx', categoryId: 'cat_food', month: '2025-01', amount: 200 }
+  ],
+  rules: [
+    // { id:'rule_x', name:'Coffee to Food', keywords:['coffee','cafe'], categoryId:'cat_food', type:'expense', priority:10 }
   ]
 };
 
@@ -61,6 +64,7 @@ function normalizeDB(db) {
   if (!db.settings) db.settings = { baseCurrency: 'USD' };
   if (!Array.isArray(db.categories)) db.categories = DEFAULT_DB.categories.slice();
   if (!Array.isArray(db.budgets)) db.budgets = [];
+  if (!Array.isArray(db.rules)) db.rules = [];
   return db;
 }
 
@@ -119,7 +123,22 @@ function autoCategorize(db, rec) {
   // decide expected type
   const expType = rec.type || ((Number(rec.amount) || 0) < 0 ? 'expense' : 'income');
 
-  // Check keywords map
+  // Custom rules (priority desc)
+  const rules = Array.isArray(db.rules) ? db.rules.slice().sort((a, b) => (b.priority || 0) - (a.priority || 0)) : [];
+  for (const r of rules) {
+    if (!r || !Array.isArray(r.keywords) || !r.categoryId) continue;
+    const kws = r.keywords.map(k => (k || '').toString().toLowerCase()).filter(Boolean);
+    if (kws.length === 0) continue;
+    const matched = kws.some(k => text.includes(k));
+    if (matched) {
+      const cat = findCategoryById(db, r.categoryId);
+      if (cat) {
+        return { categoryName: cat.name, categoryId: cat.id };
+      }
+    }
+  }
+
+  // Check default keyword map
   for (const [catName, keys] of Object.entries(KEYWORD_MAP)) {
     if (keys.some(k => text.includes(k))) {
       const cat = ensureCategory(db, catName, expType === 'income' ? 'income' : 'expense');
@@ -313,10 +332,30 @@ app.patch('/api/categories/:id', async (req, res) => {
 app.delete('/api/categories/:id', async (req, res) => {
   const db = await readDB();
   const before = db.categories.length;
+  const removed = db.categories.find(c => c.id === req.params.id);
   db.categories = db.categories.filter(c => c.id !== req.params.id);
   if (db.categories.length === before) return res.status(404).json({ error: 'not found' });
   // remove budgets referencing this category
+  const removedBudgets = db.budgets.filter(b => b.categoryId === req.params.id);
   db.budgets = db.budgets.filter(b => b.categoryId !== req.params.id);
+  await writeDB(db);
+  res.json({ ok: true, removed, removedBudgets });
+});
+
+// Restore category (supports undo)
+app.post('/api/categories/restore', async (req, res) => {
+  const { category, budgets = [] } = req.body || {};
+  if (!category || !category.id || !category.name) return res.status(400).json({ error: 'category{id,name} required' });
+  const db = await readDB();
+  const exists = db.categories.find(c => c.id === category.id);
+  if (exists) return res.status(400).json({ error: 'category id already exists' });
+  db.categories.push({ id: category.id, name: category.name, type: category.type || 'expense', parentId: category.parentId || null });
+  // optional: restore budgets
+  for (const b of budgets || []) {
+    if (!b || !b.id || !b.categoryId || !b.month) continue;
+    if (db.budgets.find(x => x.id === b.id)) continue;
+    db.budgets.push({ id: b.id, categoryId: b.categoryId, month: b.month, amount: Number(b.amount) || 0 });
+  }
   await writeDB(db);
   res.json({ ok: true });
 });
@@ -359,8 +398,70 @@ app.patch('/api/budgets/:id', async (req, res) => {
 app.delete('/api/budgets/:id', async (req, res) => {
   const db = await readDB();
   const before = db.budgets.length;
+  const removed = db.budgets.find(b => b.id === req.params.id);
   db.budgets = db.budgets.filter(b => b.id !== req.params.id);
   if (db.budgets.length === before) return res.status(404).json({ error: 'not found' });
+  await writeDB(db);
+  res.json({ ok: true, removed });
+});
+
+// Restore budget (supports undo)
+app.post('/api/budgets/restore', async (req, res) => {
+  const { budget } = req.body || {};
+  if (!budget || !budget.id || !budget.categoryId || !budget.month) return res.status(400).json({ error: 'budget{id,categoryId,month} required' });
+  const db = await readDB();
+  if (db.budgets.find(b => b.id === budget.id)) return res.status(400).json({ error: 'budget id already exists' });
+  const cat = findCategoryById(db, budget.categoryId);
+  if (!cat) return res.status(400).json({ error: 'invalid categoryId' });
+  db.budgets.push({ id: budget.id, categoryId: budget.categoryId, month: budget.month, amount: Number(budget.amount) || 0 });
+  await writeDB(db);
+  res.json({ ok: true });
+});
+
+/**
+ * Rules (custom auto-categorization)
+ */
+app.get('/api/rules', async (req, res) => {
+  const db = await readDB();
+  res.json(db.rules);
+});
+
+app.post('/api/rules', async (req, res) => {
+  const { name, keywords, categoryId, type, priority = 0 } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name required' });
+  if (!categoryId) return res.status(400).json({ error: 'categoryId required' });
+  const db = await readDB();
+  const cat = findCategoryById(db, categoryId);
+  if (!cat) return res.status(400).json({ error: 'invalid categoryId' });
+  let kws = keywords;
+  if (typeof kws === 'string') {
+    kws = kws.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  if (!Array.isArray(kws) || kws.length === 0) return res.status(400).json({ error: 'keywords[] required' });
+  const rule = { id: genId('rule'), name, keywords: kws, categoryId, type: type || undefined, priority: Number(priority) || 0 };
+  db.rules.push(rule);
+  await writeDB(db);
+  res.json(rule);
+});
+
+app.patch('/api/rules/:id', async (req, res) => {
+  const db = await readDB();
+  const idx = db.rules.findIndex(r => r.id === req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'not found' });
+  const payload = { ...db.rules[idx], ...req.body };
+  if (payload.keywords && typeof payload.keywords === 'string') {
+    payload.keywords = payload.keywords.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  db.rules[idx] = payload;
+  await writeDB(db);
+  res.json(db.rules[idx]);
+});
+
+app.delete('/api/rules/:id', async (req, res) => {
+  const db = await readDB();
+  const before = db.rules.length;
+  db.rules = db.rules.filter(r => r.id !== req.params.id);
+  if (db.rules.length === before) return res.status(404).json({ error: 'not found' });
   await writeDB(db);
   res.json({ ok: true });
 });
@@ -425,6 +526,7 @@ app.post('/api/import/transactions', async (req, res) => {
 
     function pick(obj, names = []) {
       for (const n of names) {
+        if (!n) continue;
         if (obj[n] !== undefined && obj[n] !== null && String(obj[n]).length > 0) return obj[n];
       }
       return undefined;
@@ -448,14 +550,14 @@ app.post('/api/import/transactions', async (req, res) => {
 
     for (const row of records) {
       // Try to match columns
-      const dateStr = pick(row, [defaults.date, 'date', 'Date', 'tanggal', 'Tanggal']);
+      const dateStr = pick(row, [defaults.date, 'date', 'Date', 'tanggal', 'Tanggal', 'DTPOSTED', 'D']);
       const accountName = pick(row, [defaults.account, 'account', 'Account', 'akun', 'Akun']);
       const accountId = pick(row, [defaults.accountId, 'accountId', 'AccountId']);
-      const typeRaw = (pick(row, [defaults.type, 'type', 'Type']) || '').toString().toLowerCase();
-      let amountRaw = pick(row, [defaults.amount, 'amount', 'Amount', 'nominal', 'Nominal', 'value', 'Value']);
-      const categoryRaw = pick(row, [defaults.category, 'category', 'Category', 'kategori', 'Kategori']);
-      const noteRaw = pick(row, [defaults.note, 'note', 'Note', 'catatan', 'Catatan']);
-      const descriptionRaw = pick(row, [defaults.description, 'description', 'Description', 'desc', 'Desc', 'merchant', 'Merchant', 'payee', 'Payee']);
+      const typeRaw = (pick(row, [defaults.type, 'type', 'Type', 'TRNTYPE']) || '').toString().toLowerCase();
+      let amountRaw = pick(row, [defaults.amount, 'amount', 'Amount', 'nominal', 'Nominal', 'value', 'Value', 'TRNAMT', 'T']);
+      const categoryRaw = pick(row, [defaults.category, 'category', 'Category', 'kategori', 'Kategori', 'L']);
+      const noteRaw = pick(row, [defaults.note, 'note', 'Note', 'catatan', 'Catatan', 'MEMO', 'M']);
+      const descriptionRaw = pick(row, [defaults.description, 'description', 'Description', 'desc', 'Desc', 'merchant', 'Merchant', 'payee', 'Payee', 'NAME', 'P']);
 
       if (!dateStr) continue;
 
@@ -474,8 +576,8 @@ app.post('/api/import/transactions', async (req, res) => {
       let type = typeRaw;
       if (!type) {
         type = amt < 0 ? 'expense' : 'income';
-      } else if (type.startsWith('exp')) type = 'expense';
-      else if (type.startsWith('inc')) type = 'income';
+      } else if (type.startsWith('exp') || type === 'debit') type = 'expense';
+      else if (type.startsWith('inc') || type === 'credit') type = 'income';
       else if (type.startsWith('tran')) type = 'transfer';
 
       // Account
@@ -503,10 +605,26 @@ app.post('/api/import/transactions', async (req, res) => {
         if (c) categoryId = c.id;
       }
 
+      // Normalize date
+      let d = String(dateStr);
+      // OFX: YYYYMMDD or YYYYMMDDHHMMSS
+      if (/^\d{8,14}$/.test(d)) {
+        d = `${d.slice(0,4)}-${d.slice(4,6)}-${d.slice(6,8)}`;
+      }
+      // QIF typical: M/D'YY or D M/D/YY
+      if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(d)) {
+        const parts = d.split(/[\/']/);
+        const mm = parts[0].padStart(2,'0');
+        const dd = parts[1].padStart(2,'0');
+        let yy = parts[2];
+        if (yy.length === 2) yy = `20${yy}`;
+        d = `${yy}-${mm}-${dd}`;
+      }
+
       // Build transaction
       const tx = {
         id: genId('tx'),
-        date: String(dateStr).slice(0, 10),
+        date: d.slice(0, 10),
         accountId: accId,
         type,
         category: categoryName || '',

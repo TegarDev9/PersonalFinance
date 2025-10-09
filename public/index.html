@@ -174,6 +174,36 @@
           </div>
 
           <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
+            <div class="font-semibold text-slate-800 mb-2">Auto-categorize Rules</div>
+            <div class="grid md:grid-cols-3 gap-6">
+              <form id="addRuleForm" class="space-y-2">
+                <input name="name" placeholder="Rule name" class="w-full border rounded-lg px-3 py-2" />
+                <input name="keywords" placeholder="Keywords (comma separated)" class="w-full border rounded-lg px-3 py-2" />
+                <select name="categoryId" id="ruleCategory" class="w-full border rounded-lg px-3 py-2"></select>
+                <div class="grid grid-cols-2 gap-2">
+                  <select name="type" class="border rounded-lg px-3 py-2">
+                    <option value="">Any type</option>
+                    <option value="expense">Expense</option>
+                    <option value="income">Income</option>
+                    <option value="transfer">Transfer</option>
+                  </select>
+                  <input name="priority" type="number" step="1" placeholder="Priority (default 0)" class="border rounded-lg px-3 py-2" />
+                </div>
+                <button class="w-full bg-slate-800 text-white rounded-lg px-3 py-2">Add Rule</button>
+              </form>
+              <div class="md:col-span-2">
+                <div id="rulesList" class="divide-y divide-slate-100"></div>
+              </div>
+            </div>
+          </div>
+
+          <div id="undoBar" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-4 py-2 rounded-lg shadow-lg text-sm">
+            <span>Undo (Ctrl+Z) / Redo (Ctrl+Y) available</span>
+            <button id="undoBtn" class="ml-3 underline">Undo</button>
+            <button id="redoBtn" class="ml-2 underline">Redo</button>
+          </div>
+
+          <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
             <div class="font-semibold text-slate-800 mb-3">Import CSV (Transactions)</div>
             <div class="grid md:grid-cols-3 gap-4">
               <div class="space-y-2">

@@ -3,6 +3,9 @@
 A modern dashboard with:
 - Dompet (Wallet): accounts, transactions, holdings, net worth
 - Budgets & Categories: monthly budget per category with progress and overspending alerts
+- Keyboard actions: edit/delete budgets via icons or hotkeys (E, Delete)
+- Undo/Redo for category/budget deletions (Ctrl+Z / Ctrl+Y)
+- Auto-categorization engine with custom rules
 - Sentiment: VADER (free), Google Cloud Natural Language, FinBERT (HuggingFace), Finnhub Social/News
 - Economic Calendar: TradingEconomics (guest and key support), Alpha Vantage macro indicators
 - Trading: Embedded TradingView chart
@@ -46,7 +49,13 @@ Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Se
   - Create accounts and transactions
   - Doughnut chart shows balance distribution
   - Summary bar shows cash, invested, net worth
-  - Budget panel: select month, manage categories and budgets, see progress bars and overspending list
+  - Budget panel:
+    - Select month, add/edit/delete budgets
+    - Keyboard shortcuts on a budget row: E to edit, Delete to delete
+    - Summary totals: total budget, total spent, remaining, % used
+    - Overspending list
+  - Categories panel: add, inline edit and delete category
+  - Rules panel: define custom keyword rules to auto-categorize
 
 - Trading
   - TradingView chart widget
@@ -86,14 +95,27 @@ Categories & Budgets
 - POST /api/categories { name, type }
 - PATCH /api/categories/:id
 - DELETE /api/categories/:id
+- POST /api/categories/restore { category, budgets? }   # undo restore
 
 - GET /api/budgets?month=YYYY-MM
 - POST /api/budgets { categoryId, month: 'YYYY-MM', amount }
 - PATCH /api/budgets/:id
 - DELETE /api/budgets/:id
+- POST /api/budgets/restore { budget }                 # undo restore
 
-- GET /api/reports/budget?month=YYYY-MM  -> { month, items: [{ categoryId, categoryName, budget, spent, remaining, percent }] }
+- GET /api/reports/budget?month=YYYY-MM  -> { month, items: [{ id, categoryId, categoryName, budget, spent, remaining, percent }] }
 - GET /api/budget/overspend?month=YYYY-MM -> overspending items
+
+Rules (auto-categorization)
+- GET /api/rules
+- POST /api/rules { name, keywords: string|array, categoryId, type?, priority? }
+- PATCH /api/rules/:id
+- DELETE /api/rules/:id
+
+Import
+- POST /api/import/transactions
+  - body: { records: Array<Object>, mapping?: { date, account, accountId?, type, amount, category, note, description }, autoCategorize?: boolean }
+  - Supports CSV/OFX/QIF (CSV parsed in browser, OFX/QIF parsed in browser to records, then posted here)
 
 Sentiment
 - POST /api/sentiment/analyze
