@@ -36,6 +36,7 @@ document.getElementById('sidebar').addEventListener('click', (e) => {
     loadCategories();
     initBudgetMonth();
     loadBudgetReport();
+    loadN8nLogs();
   }
 });
 
@@ -1046,6 +1047,82 @@ document.getElementById('expZipBtn')?.addEventListener('click', () => {
   window.open(`/api/export/bulk.zip?${params.toString()}`, '_blank');
 });
 
+/* n8n Logs */
+state.n8nLogs = state.n8nLogs || { items: [], total: 0, offset: 0, limit: 50, es: null };
+
+function renderN8nLogs() {
+  const list = document.getElementById('n8nLogsList');
+  const totalEl = document.getElementById('n8nLogsTotal');
+  if (totalEl) totalEl.textContent = String(state.n8nLogs.total || 0);
+  if (!list) return;
+  list.innerHTML = '';
+  (state.n8nLogs.items || []).forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'p-2 border border-slate-200 rounded-lg bg-slate-50';
+    const at = item.at || '';
+    const body = item.body !== undefined ? item.body : (item.raw !== undefined ? item.raw : item);
+    row.innerHTML = `
+      <div class="text-xs text-slate-500">${at}</div>
+      <pre class="text-xs overflow-auto">${typeof body === 'string' ? body : JSON.stringify(body, null, 2)}</pre>
+    `;
+    list.appendChild(row);
+  });
+}
+
+async function loadN8nLogs() {
+  try {
+    const inp = document.getElementById('n8nLogsLimit');
+    if (inp) {
+      const lim = Number(inp.value || 50);
+      state.n8nLogs.limit = Math.max(1, Math.min(500, lim || 50));
+    }
+    const qs = new URLSearchParams({ limit: String(state.n8nLogs.limit), offset: String(state.n8nLogs.offset) }).toString();
+    const res = await jsonFetch(`/webhooks/n8n/logs?${qs}`);
+    if (res && !res.error) {
+      state.n8nLogs.total = res.total || 0;
+      state.n8nLogs.items = res.items || [];
+      renderN8nLogs();
+    }
+  } catch {}
+}
+
+document.getElementById('n8nLogsRefresh')?.addEventListener('click', () => {
+  state.n8nLogs.offset = 0;
+  loadN8nLogs();
+});
+document.getElementById('n8nLogsPrev')?.addEventListener('click', () => {
+  state.n8nLogs.offset = state.n8nLogs.offset + state.n8nLogs.limit;
+  loadN8nLogs();
+});
+document.getElementById('n8nLogsNext')?.addEventListener('click', () => {
+  state.n8nLogs.offset = Math.max(0, state.n8nLogs.offset - state.n8nLogs.limit);
+  loadN8nLogs();
+});
+document.getElementById('n8nLogsLiveBtn')?.addEventListener('click', () => {
+  const btn = document.getElementById('n8nLogsLiveBtn');
+  if (!state.n8nLogs.es) {
+    try {
+      state.n8nLogs.es = new EventSource('/webhooks/n8n/logs/stream');
+      state.n8nLogs.es.onmessage = (ev) => {
+        let obj;
+        try { obj = JSON.parse(ev.data); } catch { obj = { raw: ev.data }; }
+        state.n8nLogs.items = [obj, ...(state.n8nLogs.items || [])].slice(0, 200);
+        renderN8nLogs();
+      };
+      state.n8nLogs.es.onerror = () => {
+        // keep connection attempts; browser will retry
+      };
+      if (btn) btn.textContent = 'Stop Live';
+    } catch {
+      if (btn) btn.textContent = 'Start Live';
+    }
+  } else {
+    try { state.n8nLogs.es.close(); } catch {}
+    state.n8nLogs.es = null;
+    if (btn) btn.textContent = 'Start Live';
+  }
+});
+
 /* TradingView */
 function loadTradingView(sym) {
   const containerId = 'tv_container';
@@ -1160,5 +1237,6 @@ document.getElementById('chatSend')?.addEventListener('click', async () => {
   loadCategories();
   initBudgetMonth();
   loadBudgetReport();
+  loadN8nLogs();
   loadTradingView(document.getElementById('tvSymbol')?.value);
 })();

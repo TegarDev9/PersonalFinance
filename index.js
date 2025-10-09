@@ -964,6 +964,109 @@ app.get('/webhooks/n8n/logs', async (req, res) => {
   }
 });
 
+// Live SSE stream for n8n hook logs
+app.get('/webhooks/n8n/logs/stream', async (req, res) => {
+  try {
+    res.setHeader('content-type', 'text/event-stream');
+    res.setHeader('cache-control', 'no-cache, no-transform');
+    res.setHeader('connection', 'keep-alive');
+
+    res.write(': connected\n\n');
+
+    let timer = null;
+
+    // KV backend
+    if (kvEnabled()) {
+      let total = await kvListLen(HOOKS_LIST_KEY);
+      const initCount = Math.min(10, total);
+      if (initCount > 0) {
+        const arr = await kvListRange(HOOKS_LIST_KEY, total - initCount, total - 1);
+        arr.forEach(line => res.write(`data: ${line}\n\n`));
+      }
+      let lastIdx = total - 1;
+      timer = setInterval(async () => {
+        try {
+          const newTotal = await kvListLen(HOOKS_LIST_KEY);
+          if (newTotal > lastIdx + 1) {
+            const arr = await kvListRange(HOOKS_LIST_KEY, lastIdx + 1, newTotal - 1);
+            arr.forEach(line => res.write(`data: ${line}\n\n`));
+            lastIdx = newTotal - 1;
+          } else {
+            res.write(': keepalive\n\n');
+          }
+        } catch {}
+      }, 2000);
+    }
+    // Deno KV backend
+    else if (denoKvAvailable()) {
+      const kv = await getDenoKv();
+      const scan = async () => {
+        const all = [];
+        for await (const entry of kv.list({ prefix: ['fin', 'hooks'] })) {
+          all.push(entry);
+        }
+        return all.map(e => {
+          const k = e.key?.[2] || '';
+          const ts = parseInt(String(k).split('_')[0], 10);
+          let val = e.value;
+          if (typeof val === 'string') {
+            try { val = JSON.parse(val); } catch {}
+          }
+          return { ts: Number.isFinite(ts) ? ts : 0, val, raw: typeof e.value === 'string' ? e.value : JSON.stringify(e.value) };
+        }).sort((a, b) => a.ts - b.ts); // oldest first
+      };
+      let arr = await scan();
+      const init = arr.slice(-10);
+      init.forEach(x => res.write(`data: ${JSON.stringify(x.val)}\n\n`));
+      let lastTs = init.length ? init[init.length - 1].ts : 0;
+      timer = setInterval(async () => {
+        try {
+          const next = await scan();
+          const news = next.filter(x => x.ts > lastTs);
+          if (news.length) {
+            news.forEach(x => res.write(`data: ${JSON.stringify(x.val)}\n\n`));
+            lastTs = news[news.length - 1].ts;
+          } else {
+            res.write(': keepalive\n\n');
+          }
+        } catch {}
+      }, 2000);
+    }
+    // File backend
+    else {
+      await ensureDataFile();
+      const logPath = path.join(DATA_DIR, 'hooks.log');
+      const readLines = async () => {
+        if (!fs.existsSync(logPath)) return [];
+        const raw = await fsp.readFile(logPath, 'utf-8');
+        return raw.split(/\r?\n/).filter(Boolean);
+      };
+      let lines = await readLines();
+      const init = lines.slice(-10);
+      init.forEach(l => res.write(`data: ${l}\n\n`));
+      let lastCount = lines.length;
+      timer = setInterval(async () => {
+        try {
+          const now = await readLines();
+          if (now.length > lastCount) {
+            now.slice(lastCount).forEach(l => res.write(`data: ${l}\n\n`));
+            lastCount = now.length;
+          } else {
+            res.write(': keepalive\n\n');
+          }
+        } catch {}
+      }, 2000);
+    }
+
+    req.on('close', () => {
+      if (timer) clearInterval(timer);
+      try { res.end(); } catch {}
+    });
+  } catch (e) {
+    try { res.status(500).end(); } catch {}
+  }
+});
+
 // Export helpers and endpoints
 function filterTransactions(db, query) {
   const { month, startMonth, endMonth, startDate, endDate, accountId, category, type, minAmount, maxAmount } = query;
@@ -1200,6 +1303,25 @@ app.get('/api/export/bulk.zip', async (req, res) => {
       else if (format === 'qif') content = toQIF(db, arr);
       else content = toOFX(db, arr);
       const fname = `${sanitize(accName)}-${sanitize(d)}.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
+  } else if (mode === 'account_month') {
+    const groups = {};
+    for (const t of txs) {
+      const acc = db.accounts.find(a => a.id === t.accountId);
+      const accName = acc ? acc.name : t.accountId || 'Account';
+      const m = monthKey(t.date);
+      const key = `${accName}__${m}`;
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(t);
+    }
+    for (const [key, arr] of Object.entries(groups)) {
+      const [accName, m] = key.split('__');
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = `${sanitize(accName)}-${sanitize(m)}.${format === 'csv' ? 'csv' : format}`;
       zip.file(fname, content);
     }
   } else if (mode === 'category') {

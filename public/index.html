@@ -315,6 +315,7 @@
                         <option value="category">Group by Category</option>
                         <option value="account">Group by Account</option>
                         <option value="account_day">Group by Account + Day</option>
+                        <option value="account_month">Group by Account + Month</option>
                       </select>
                     </div>
                     <div class="grid grid-cols-2 gap-2 mt-1">
@@ -336,6 +337,21 @@
             <div class="mt-4 overflow-auto">
               <table class="min-w-full text-xs" id="expPreviewTable"></table>
             </div>
+          </div>
+
+          <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm mt-6">
+            <div class="flex items-center justify-between">
+              <div class="font-semibold text-slate-800">n8n Logs</div>
+              <div class="text-xs text-slate-600">Total: <span id="n8nLogsTotal">0</span></div>
+            </div>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <input id="n8nLogsLimit" type="number" min="1" max="500" value="50" class="border rounded px-2 py-1 text-sm w-24" />
+              <button id="n8nLogsRefresh" class="bg-slate-700 text-white rounded-lg px-3 py-1.5 text-sm">Refresh</button>
+              <button id="n8nLogsPrev" class="border rounded-lg px-3 py-1.5 text-sm">Prev</button>
+              <button id="n8nLogsNext" class="border rounded-lg px-3 py-1.5 text-sm">Next</button>
+              <button id="n8nLogsLiveBtn" class="bg-brand-600 text-white rounded-lg px-3 py-1.5 text-sm">Start Live</button>
+            </div>
+            <div class="mt-3 space-y-2 max-h-72 overflow-y-auto" id="n8nLogsList"></div>
           </div>
 
         </section>

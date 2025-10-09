@@ -62,6 +62,7 @@ Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Se
     - Overspending list
   - Categories panel: add, inline edit and delete category
   - Rules panel: define custom keyword rules to auto-categorize
+  - n8n Logs panel: view paginated logs with Refresh/Prev/Next and Start Live (SSE) button
 
 - Trading
   - TradingView chart widget
@@ -127,14 +128,15 @@ Export
 - GET /api/export/transactions.csv (same query filters as /transactions)
 - GET /api/export/transactions.qif
 - GET /api/export/transactions.ofx
-- GET /api/export/bulk.zip?mode=month|day|category|account|account_day&format=csv|qif|ofx&...filters
+- GET /api/export/bulk.zip?mode=month|day|category|account|account_day|account_month&format=csv|qif|ofx&...filters
   - Group by:
     - Month (YYYY-MM)
     - Day (YYYY-MM-DD)
     - Category
     - Account
     - Account + Day (per-account daily files)
-  - File names include grouping context, e.g. 2025-01.csv, 2025-01-10.csv, Cash-2025-01-10.csv
+    - Account + Month (per-account monthly files)
+  - File names include grouping context, e.g. 2025-01.csv, 2025-01-10.csv, Cash-2025-01-10.csv, Cash-2025-01.csv
   - Additional filters supported: minAmount, maxAmount, startDate/endDate (YYYY-MM-DD), type=income|expense|transfer
 
 Sentiment
@@ -151,6 +153,13 @@ AI Chat
 
 n8n
 - POST /webhooks/n8n (receive) -> persists JSON-line logs:
+  - If KV (Vercel/Upstash) configured: RPUSH to KV list key (KV_HOOKS_KEY, default fin:hooks)
+  - If Deno KV available: set entries under ['fin','hooks', <timestamp_random>]
+  - Else: append to local file data/hooks.log
+- GET /webhooks/n8n/logs?limit=50&offset=0 -> returns { total, items[] } newest-first, supports KV/Deno KV/File backends
+- GET /webhooks/n8n/logs/stream -> Server-Sent Events (SSE) stream for live logs (sends last 10 on connect, then new entries)
+- POST /n8n/forward { url?, data } -> forwards JSON to an n8n webhook (uses N8N_WEBHOOK_URL if url omitted)
+- Automatic overspending alert: when a new expense pushes a category above its monthly budget, the server sends a JSON payload to N8N_WEBHOOK_URL (if set)
   - If KV (Vercel/Upstash) configured: RPUSH to KV list key (KV_HOOKS_KEY, default fin:hooks)
   - If Deno KV available: set entries under ['fin','hooks' <ptimestamp_random>]
   - Else: append to local file data/hooks.log
