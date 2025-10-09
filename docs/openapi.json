@@ -129,7 +129,7 @@
           { "lang": "JavaScript", "label": "fetch", "source": "const BASE='https://your-app.vercel.app';\nconst res=await fetch(`${BASE}/api/wallet/summary`);\nconst data=await res.json();\nconsole.log(data);" },
           { "lang": "TypeScript", "label": "fetch", "source": "const BASE='https://your-app.vercel.app';\ntype Summary={currency:string;totals:{cash:number;invested:number;netWorth:number};counts:{accounts:number;transactions:number;holdings:number}};\nconst res=await fetch(`${BASE}/api/wallet/summary`);\nconst data=await res.json() as Summary;" },
           { "lang": "Python", "label": "requests", "source": "import requests\nBASE='https://your-app.vercel.app'\nr=requests.get(f'{BASE}/api/wallet/summary')\nprint(r.json())" }
-      _code  new]</,
+      ],
 
         "responses": {
           "200": {
