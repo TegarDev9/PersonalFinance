@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en" class="h-full bg-slate-50">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FinDash API Docs</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              brand: { 50:"#eff6ff",100:"#dbeafe",200:"#bfdbfe",300:"#93c5fd",400:"#60a5fa",500:"#3b82f6",600:"#2563eb",700:"#1d4ed8",800:"#1e40af",900:"#1e3a8a" }
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="h-full">
+    <header class="sticky top-0 z-20 bg-white/70 backdrop-blur border-b border-slate-200">
+      <div class="max-w-6xl mx-auto px-5 py-3 flex items-center gap-4">
+        <a href="/" class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-brand-600 text-white grid place-items-center font-bold">F</div>
+          <span class="font-semibold text-slate-800">FinDash</span>
+        </a>
+        <div class="ml-auto flex items-center gap-3 text-sm">
+          <a class="hover:text-brand-700" href="/api-docs">Swagger</a>
+          <a class="hover:text-brand-700" href="/redoc">Redoc</a>
+          <a class="hover:text-brand-700" href="/openapi.json">OpenAPI JSON</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-5 py-8 space-y-10">
+      <section class="grid md:grid-cols-2 gap-6 items-center">
+        <div class="space-y-4">
+          <h1 class="text-3xl md:text-4xl font-bold text-slate-900">FinDash API Documentation</h1>
+          <p class="text-slate-600 leading-relaxed">
+            Modern API for personal finance, trading sentiment, automation (n8n), and AI integrations.
+            Explore interactive docs via Swagger or Redoc, and use the OpenAPI spec in your favorite client.
+          </p>
+          <div class="flex flex-wrap gap-3">
+            <a href="/api-docs" class="inline-flex items-center px-4 py-2 rounded-lg bg-brand-600 text-white">Open Swagger</a>
+            <a href="/redoc" class="inline-flex items-center px-4 py-2 rounded-lg border border-brand-600 text-brand-700">Open Redoc</a>
+            <a href="/openapi.json" class="inline-flex items-center px-4 py-2 rounded-lg border">OpenAPI JSON</a>
+          </div>
+        </div>
+        <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+          <pre class="text-xs text-slate-800 overflow-auto"><code>curl -s https://your-app.vercel.app/api/wallet/summary | jq
+
+# Add a transaction (requires persistence configured)
+curl -X POST https://your-app.vercel.app/api/wallet/transactions \
+  -H 'content-type: application/json' \
+  -d '{
+    "date":"2025-01-12",
+    "accountId":"acc_cash",
+    "type":"expense",
+    "category":"Food & Dining",
+    "amount":-12.5,
+    "note":"Lunch"
+  }'</code></pre>
+        </div>
+      </section>
+
+      <section class="grid md:grid-cols-3 gap-6">
+        <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <h3 class="font-semibold text-slate-800 mb-2">Wallet</h3>
+          <p class="text-sm text-slate-600 mb-3">Accounts, transactions, holdings, summaries.</p>
+          <ul class="text-sm list-disc ml-5 space-y-1">
+            <li>GET /api/wallet/summary</li>
+            <li>GET/POST /api/wallet/accounts</li>
+            <li>GET/POST /api/wallet/transactions</li>
+            <li>GET/POST /api/wallet/holdings</li>
+          </ul>
+        </div>
+        <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <h3 class="font-semibold text-slate-800 mb-2">Budgets & Categories</h3>
+          <p class="text-sm text-slate-600 mb-3">Monthly budgets, inline edits, overspending alerts (n8n).</p>
+          <ul class="text-sm list-disc ml-5 space-y-1">
+            <li>GET/POST/PATCH/DELETE /api/categories</li>
+            <li>GET/POST/PATCH/DELETE /api/budgets</li>
+            <li>GET /api/reports/budget</li>
+            <li>GET /api/budget/overspend</li>
+          </ul>
+        </div>
+        <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <h3 class="font-semibold text-slate-800 mb-2">Automation & Exports</h3>
+          <p class="text-sm text-slate-600 mb-3">n8n webhooks, logs streaming, CSV/QIF/OFX exports, ZIP bulk.</p>
+          <ul class="text-sm list-disc ml-5 space-y-1">
+            <li>POST /webhooks/n8n</li>
+            <li>GET /webhooks/n8n/logs(.jsonl|/stream)</li>
+            <li>GET /api/export/transactions.(csv|qif|ofx)</li>
+            <li>GET /api/export/bulk.zip</li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="grid md:grid-cols-2 gap-6">
+        <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <h3 class="font-semibold text-slate-800 mb-2">Getting Started</h3>
+          <ol class="list-decimal ml-5 text-sm text-slate-700 space-y-1">
+            <li>Set environment variables (keys for providers, optional LOGS_AUTH_TOKEN).</li>
+            <li>For persistence on Vercel, configure Vercel KV or Upstash Redis REST.</li>
+            <li>Use Swagger/Redoc to explore endpoints and run requests.</li>
+          </ol>
+        </div>
+        <div class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
+          <h3 class="font-semibold text-slate-800 mb-2">Auth & Rate Limits</h3>
+          <p class="text-sm text-slate-700">
+            Logs endpoints can be protected by token via query (?token=), header (X-Logs-Token) atau Authorization: Bearer.
+            Rate limit default 60 requests / 60s per IP untuk endpoint logs.
+          </p>
+        </div>
+      </section>
+
+      <section class="p-5 bg-white rounded-xl border border-slate-200 shadow-sm">
+        <h3 class="font-semibold text-slate-800 mb-2">Persistence (Serverless)</h3>
+        <p class="text-sm text-slate-700 mb-2">
+          File system pada Vercel bersifat read-only dan ephemeral. Aktifkan KV agar data persisten:
+        </p>
+        <ul class="list-disc ml-5 text-sm text-slate-700 space-y-1">
+          <li>Vercel KV: set KV_REST_API_URL & KV_REST_API_TOKEN</li>
+          <li>Upstash Redis REST: set UPSTASH_REDIS_REST_URL & UPSTASH_REDIS_REST_TOKEN</li>
+        </ul>
+      </section>
+
+      <footer class="py-8 text-center text-xs text-slate-500">
+        © 2025 FinDash. Built for modern finance workflows.
+      </footer>
+    </main>
+  </body>
+</html>

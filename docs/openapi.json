@@ -3,7 +3,7 @@
   "info": {
     "title": "FinDash API",
     "version": "1.0.0",
-    "description": "Personal finance, trading, sentiment, AI and n8n integration API.\n\nNotes:\n- Most write endpoints require persistence configured (Vercel KV / Upstash). Without KV, data may not persist on serverless environments.\n- Logs endpoints can be protected via LOGS_AUTH_TOKEN and support token in query (?token=), header (X-Logs-Token) or Authorization: Bearer."
+    "description": "Personal finance, trading, sentiment, AI and n8n integration API.\n\nNotes:\n- Write endpoints persist only when KV is configured (Vercel KV / Upstash). On serverless without KV, data may be ephemeral.\n- Logs endpoints can be protected via LOGS_AUTH_TOKEN and accept token via query (?token=), header (X-Logs-Token) or Authorization: Bearer."
   },
   "servers": [
     { "url": "http://localhost:3000" },
@@ -117,6 +117,9 @@
       "get": {
         "tags": ["Wallet"],
         "summary": "Get wallet summary",
+        "x-codeSamples": [
+          { "lang": "curl", "label": "curl", "source": "curl -s $BASE/api/wallet/summary" }
+        ],
         "responses": {
           "200": {
             "description": "Summary",
@@ -143,6 +146,11 @@
                       }
                     }
                   }
+                },
+                "example": {
+                  "currency": "USD",
+                  "totals": { "cash": 1234.56, "invested": 2000, "netWorth": 3234.56 },
+                  "counts": { "accounts": 2, "transactions": 12, "holdings": 1 }
                 }
               }
             }
@@ -154,6 +162,9 @@
       "get": {
         "tags": ["Wallet"],
         "summary": "List accounts",
+        "x-codeSamples": [
+          { "lang": "curl", "source": "curl -s $BASE/api/wallet/accounts" }
+        ],
         "responses": {
           "200": {
             "description": "Array of accounts",
@@ -164,6 +175,9 @@
       "post": {
         "tags": ["Wallet"],
         "summary": "Create account",
+        "x-codeSamples": [
+          { "lang": "curl", "source": "curl -X POST $BASE/api/wallet/accounts -H 'content-type: application/json' -d '{\"name\":\"Cash 2\",\"type\":\"cash\",\"balance\":0}'" }
+        ],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" }, "type": { "type": "string" }, "balance": { "type": "number" } }, "required": ["name"] } } }
@@ -177,6 +191,9 @@
       "patch": {
         "tags": ["Wallet"],
         "summary": "Update account",
+        "x-codeSamples": [
+          { "lang": "curl", "source": "curl -X PATCH $BASE/api/wallet/accounts/acc_123 -H 'content-type: application/json' -d '{\"name\":\"Primary Cash\"}'" }
+        ],
         "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } },
         "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Account" } } } } }
@@ -184,6 +201,9 @@
       "delete": {
         "tags": ["Wallet"],
         "summary": "Delete account",
+        "x-codeSamples": [
+          { "lang": "curl", "source": "curl -X DELETE $BASE/api/wallet/accounts/acc_123" }
+        ],
         "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Deleted" } }
       }
@@ -192,6 +212,9 @@
       "get": {
         "tags": ["Wallet"],
         "summary": "List transactions",
+        "x-codeSamples": [
+          { "lang": "curl", "source": "curl -s \"$BASE/api/wallet/transactions?accountId=acc_cash&month=2025-01&limit=10\"" }
+        ],
         "parameters": [
           { "in": "query", "name": "accountId", "schema": { "type": "string" } },
           { "in": "query", "name": "category", "schema": { "type": "string" } },
@@ -210,6 +233,9 @@
       "post": {
         "tags": ["Wallet"],
         "summary": "Create transaction",
+        "x-codeSamples": [
+          { "lang": "curl", "source": "curl -X POST $BASE/api/wallet/transactions -H 'content-type: application/json' -d '{\"date\":\"2025-01-12\",\"accountId\":\"acc_cash\",\"type\":\"expense\",\"category\":\"Food & Dining\",\"amount\":-12.5,\"note\":\"Lunch\"}'" }
+        ],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "type": "object", "properties": { "date": { "type": "string", "format": "date" }, "accountId": { "type": "string" }, "type": { "type": "string" }, "category": { "type": "string" }, "categoryId": { "type": "string" }, "amount": { "type": "number" }, "note": { "type": "string" } }, "required": ["date","accountId","type","amount"] } } }
@@ -218,17 +244,31 @@
       }
     },
     "/api/wallet/holdings": {
-      "get": { "tags": ["Wallet"], "summary": "List holdings", "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Holding" } } } } } } },
+      "get": {
+        "tags": ["Wallet"], "summary": "List holdings",
+        "x-codeSamples": [
+          { "lang": "curl", "source": "curl -s $BASE/api/wallet/holdings" }
+        ],
+        "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Holding" } } } } } }
+      },
       "post": {
         "tags": ["Wallet"], "summary": "Create holding",
+        "x-codeSamples": [
+          { "lang": "curl", "source": "curl -X POST $BASE/api/wallet/holdings -H 'content-type: application/json' -d '{\"symbol\":\"AAPL\",\"quantity\":10,\"avgPrice\":150}'" }
+        ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "symbol": { "type": "string" }, "quantity": { "type": "number" }, "avgPrice": { "type": "number" } }, "required": ["symbol"] } } } },
         "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Holding" } } } } }
       }
     },
     "/api/categories": {
-      "get": { "tags": ["Categories"], "summary": "List categories", "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Category" } } } } } } },
+      "get": {
+        "tags": ["Categories"], "summary": "List categories",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -s $BASE/api/categories" }],
+        "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Category" } } } } } }
+      },
       "post": {
         "tags": ["Categories"], "summary": "Create category",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST $BASE/api/categories -H 'content-type: application/json' -d '{\"name\":\"Transport\",\"type\":\"expense\"}'" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "name": { "type": "string" }, "type": { "type": "string" }, "parentId": { "type": "string" } }, "required": ["name"] } } } },
         "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Category" } } } } }
       }
@@ -236,12 +276,14 @@
     "/api/categories/{id}": {
       "patch": {
         "tags": ["Categories"], "summary": "Update category",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X PATCH $BASE/api/categories/cat_123 -H 'content-type: application/json' -d '{\"name\":\"Food & Dining\"}'" }],
         "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Category" } } } },
         "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Category" } } } } }
       },
       "delete": {
         "tags": ["Categories"], "summary": "Delete category",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X DELETE $BASE/api/categories/cat_123" }],
         "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Deleted" } }
       }
@@ -249,6 +291,7 @@
     "/api/categories/restore": {
       "post": {
         "tags": ["Categories"], "summary": "Restore a deleted category with budgets",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST $BASE/api/categories/restore -H 'content-type: application/json' -d '{\"category\":{\"id\":\"cat_old\",\"name\":\"Old Cat\",\"type\":\"expense\"},\"budgets\":[{\"id\":\"bud_old\",\"categoryId\":\"cat_old\",\"month\":\"2025-01\",\"amount\":200}]}'" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "category": { "$ref": "#/components/schemas/Category" }, "budgets": { "type": "array", "items": { "$ref": "#/components/schemas/Budget" } } }, "required": ["category"] } } } },
         "responses": { "200": { "description": "Restored" } }
       }
@@ -256,11 +299,13 @@
     "/api/budgets": {
       "get": {
         "tags": ["Budgets"], "summary": "List budgets (optionally filter by month)",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -s \"$BASE/api/budgets?month=2025-01\""}],
         "parameters": [{ "in": "query", "name": "month", "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Budget" } } } } } }
       },
       "post": {
         "tags": ["Budgets"], "summary": "Create budget",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST $BASE/api/budgets -H 'content-type: application/json' -d '{\"categoryId\":\"cat_food\",\"month\":\"2025-01\",\"amount\":300}'" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "categoryId": { "type": "string" }, "month": { "type": "string" }, "amount": { "type": "number" } }, "required": ["categoryId","month"] } } } },
         "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Budget" } } } } }
       }
@@ -268,12 +313,14 @@
     "/api/budgets/{id}": {
       "patch": {
         "tags": ["Budgets"], "summary": "Update budget",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X PATCH $BASE/api/budgets/bud_123 -H 'content-type: application/json' -d '{\"amount\":450}'" }],
         "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Budget" } } } },
         "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Budget" } } } } }
       },
       "delete": {
         "tags": ["Budgets"], "summary": "Delete budget",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X DELETE $BASE/api/budgets/bud_123" }],
         "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Deleted" } }
       }
@@ -281,14 +328,20 @@
     "/api/budgets/restore": {
       "post": {
         "tags": ["Budgets"], "summary": "Restore budget",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST $BASE/api/budgets/restore -H 'content-type: application/json' -d '{\"budget\":{\"id\":\"bud_old\",\"categoryId\":\"cat_food\",\"month\":\"2025-01\",\"amount\":300}}'"}],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "budget": { "$ref": "#/components/schemas/Budget" } }, "required": ["budget"] } } } },
         "responses": { "200": { "description": "Restored" } }
       }
     },
     "/api/rules": {
-      "get": { "tags": ["Rules"], "summary": "List rules", "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Rule" } } } } } } },
+      "get": {
+        "tags": ["Rules"], "summary": "List rules",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -s $BASE/api/rules" }],
+        "responses": { "200": { "description": "Array", "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Rule" } } } } } }
+      },
       "post": {
         "tags": ["Rules"], "summary": "Create rule",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST $BASE/api/rules -H 'content-type: application/json' -d '{\"name\":\"Food keywords\",\"keywords\":[\"food\",\"restaurant\"],\"categoryId\":\"cat_food\",\"type\":\"expense\",\"priority\":10}'" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rule" } } } },
         "responses": { "200": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rule" } } } } }
       }
@@ -296,12 +349,14 @@
     "/api/rules/{id}": {
       "patch": {
         "tags": ["Rules"], "summary": "Update rule",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X PATCH $BASE/api/rules/rule_123 -H 'content-type: application/json' -d '{\"priority\":20}'" }],
         "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
         "requestBody": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rule" } } } },
         "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Rule" } } } } }
       },
       "delete": {
         "tags": ["Rules"], "summary": "Delete rule",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X DELETE $BASE/api/rules/rule_123" }],
         "parameters": [{ "in": "path", "name": "id", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Deleted" } }
       }
@@ -309,6 +364,7 @@
     "/api/reports/budget": {
       "get": {
         "tags": ["Reports"], "summary": "Budget report for a month",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -s \"$BASE/api/reports/budget?month=2025-01\""}],
         "parameters": [{ "in": "query", "name": "month", "required": true, "schema": { "type": "string", "example": "2025-01" } }],
         "responses": {
           "200": {
@@ -321,6 +377,7 @@
     "/api/budget/overspend": {
       "get": {
         "tags": ["Reports"], "summary": "Overspending list for a month",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -s \"$BASE/api/budget/overspend?month=2025-01\""}],
         "parameters": [{ "in": "query", "name": "month", "required": true, "schema": { "type": "string" } }],
         "responses": { "200": { "description": "Overs", "content": { "application/json": { "schema": { "type": "object" } } } } }
       }
@@ -329,6 +386,7 @@
       "post": {
         "tags": ["Import/Export"],
         "summary": "Import transactions (CSV/OFX/QIF parsed on client)",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST $BASE/api/import/transactions -H 'content-type: application/json' -d '{\"records\":[{\"date\":\"2025-01-02\",\"account\":\"Cash\",\"type\":\"expense\",\"amount\":-5.25\",\"description\":\"Coffee\"}],\"mapping\":{\"date\":\"date\",\"account\":\"account\",\"type\":\"type\",\"amount\":\"amount\",\"description\":\"description\"},\"autoCategorize\":true}'"}],
         "requestBody": {
           "required": true,
           "content": { "application/json": { "schema": { "type": "object", "properties": { "records": { "type": "array", "items": { "type": "object" } }, "mapping": { "type": "object" }, "autoCategorize": { "type": "boolean", "default": true } }, "required": ["records"] } } }
@@ -339,6 +397,7 @@
     "/api/export/transactions.csv": {
       "get": {
         "tags": ["Import/Export"], "summary": "Export CSV",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -L \"$BASE/api/export/transactions.csv?accountId=acc_cash&month=2025-01\"" }],
         "parameters": [
           { "in": "query", "name": "accountId", "schema": { "type": "string" } },
           { "in": "query", "name": "month", "schema": { "type": "string" } },
@@ -356,6 +415,7 @@
     "/api/export/transactions.qif": {
       "get": {
         "tags": ["Import/Export"], "summary": "Export QIF",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -L \"$BASE/api/export/transactions.qif?accountId=acc_cash&month=2025-01\" -o out.qif" }],
         "parameters": [
           { "in": "query", "name": "accountId", "schema": { "type": "string" } },
           { "in": "query", "name": "month", "schema": { "type": "string" } }
@@ -366,6 +426,7 @@
     "/api/export/transactions.ofx": {
       "get": {
         "tags": ["Import/Export"], "summary": "Export OFX",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -L \"$BASE/api/export/transactions.ofx?accountId=acc_cash&month=2025-01\" -o out.ofx" }],
         "parameters": [
           { "in": "query", "name": "accountId", "schema": { "type": "string" } },
           { "in": "query", "name": "month", "schema": { "type": "string" } }
@@ -376,6 +437,7 @@
     "/api/export/bulk.zip": {
       "get": {
         "tags": ["Import/Export"], "summary": "Bulk ZIP export",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -L \"$BASE/api/export/bulk.zip?mode=account_month_category&format=csv&startMonth=2025-01&endMonth=2025-02\" -o export.zip" }],
         "parameters": [
           { "in": "query", "name": "mode", "schema": { "type": "string", "enum": ["month","day","category","account","account_day","account_month","account_month_category","type_month","type_account_month","category_month","category_account_month"] }, "description": "Grouping mode" },
           { "in": "query", "name": "format", "schema": { "type": "string", "enum": ["csv","qif","ofx"], "default": "csv" } },
@@ -396,6 +458,10 @@
       "post": {
         "tags": ["Sentiment"],
         "summary": "Analyze sentiment",
+        "x-codeSamples": [
+          { "lang": "curl", "label": "VADER", "source": "curl -X POST $BASE/api/sentiment/analyze -H 'content-type: application/json' -d '{\"provider\":\"vader\",\"text\":\"Stock rallied strongly today!\"}'" },
+          { "lang": "curl", "label": "Finnhub News", "source": "curl -X POST $BASE/api/sentiment/analyze -H 'content-type: application/json' -d '{\"provider\":\"finnhub\",\"symbol\":\"TSLA\",\"type\":\"news\"}'" }
+        ],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "provider": { "type": "string", "enum": ["vader","google","finbert","finnhub"] }, "text": { "type": "string" }, "symbol": { "type": "string" }, "from": { "type": "string", "format": "date" }, "type": { "type": "string", "enum": ["social","news"] } }, "required": ["provider"] } } } },
         "responses": { "200": { "description": "Result", "content": { "application/json": { "schema": { "type": "object" } } } } }
       }
@@ -403,6 +469,7 @@
     "/webhooks/n8n": {
       "post": {
         "tags": ["n8n"], "summary": "Receive n8n webhook (log entry)",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST $BASE/webhooks/n8n -H 'content-type: application/json' -d '{\"hello\":\"world\"}'" }],
         "requestBody": { "required": false, "content": { "application/json": { "schema": { "type": "object" } } } },
         "responses": { "200": { "description": "OK" } }
       }
@@ -410,6 +477,7 @@
     "/n8n/forward": {
       "post": {
         "tags": ["n8n"], "summary": "Forward JSON to n8n webhook URL",
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST $BASE/n8n/forward -H 'content-type: application/json' -d '{\"url\":\"https://n8n.example/webhook/xxx\",\"data\":{\"foo\":\"bar\"}}'"}],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "properties": { "url": { "type": "string" }, "data": { "type": "object" } } } } } },
         "responses": { "200": { "description": "Forward status" } }
       }
@@ -418,18 +486,26 @@
       "get": {
         "tags": ["n8n"], "summary": "List logs (newest-first)",
         "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -s \"$BASE/webhooks/n8n/logs?limit=10&offset=0&token=YOUR_TOKEN\""}],
         "parameters": [
           { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 50 } },
           { "in": "query", "name": "offset", "schema": { "type": "integer", "default": 0 } },
           { "in": "query", "name": "token", "schema": { "type": "string" }, "description": "If LOGS_AUTH_TOKEN enabled" }
         ],
         "responses": { "200": { "description": "Logs", "content": { "application/json": { "schema": { "type": "object" } } } } }
+      },
+      "delete": {
+        "tags": ["n8n"], "summary": "Clear logs (DELETE)",
+        "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X DELETE \"$BASE/webhooks/n8n/logs?token=YOUR_TOKEN\""}],
+        "responses": { "200": { "description": "Cleared" } }
       }
     },
     "/webhooks/n8n/logs.jsonl": {
       "get": {
         "tags": ["n8n"], "summary": "Download logs as JSONL",
         "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -L \"$BASE/webhooks/n8n/logs.jsonl?limit=100&offset=0&token=YOUR_TOKEN\" -o logs.jsonl"}],
         "parameters": [
           { "in": "query", "name": "limit", "schema": { "type": "integer", "default": 1000 } },
           { "in": "query", "name": "offset", "schema": { "type": "integer", "default": 0 } },
@@ -442,6 +518,7 @@
       "get": {
         "tags": ["n8n"], "summary": "Live logs via SSE",
         "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -N \"$BASE/webhooks/n8n/logs/stream?token=YOUR_TOKEN\""}],
         "parameters": [{ "in": "query", "name": "token", "schema": { "type": "string" } }],
         "responses": { "200": { "description": "SSE stream", "content": { "text/event-stream": { "schema": { "type": "string" } } } } }
       }
@@ -450,13 +527,7 @@
       "post": {
         "tags": ["n8n"], "summary": "Clear logs",
         "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
-        "responses": { "200": { "description": "Cleared" } }
-      }
-    },
-    "/webhooks/n8n/logs": {
-      "delete": {
-        "tags": ["n8n"], "summary": "Clear logs (DELETE)",
-        "security": [{ "logsTokenQuery": [] }, { "logsTokenHeader": [] }, { "bearerAuth": [] }],
+        "x-codeSamples": [{ "lang": "curl", "source": "curl -X POST \"$BASE/webhooks/n8n/logs/clear?token=YOUR_TOKEN\""}],
         "responses": { "200": { "description": "Cleared" } }
       }
     }

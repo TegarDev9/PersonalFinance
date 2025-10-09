@@ -20,8 +20,44 @@ try {
   const openapi = require(path.join(__dirname, 'docs', 'openapi.json'));
   app.get('/openapi.json', (req, res) => res.json(openapi));
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(openapi, { explorer: true }));
+
+  // Redoc UI
+  app.get('/redoc', (req, res) => {
+    res.setHeader('content-type', 'text/html; charset=utf-8');
+    res.end(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FinDash API — Redoc</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { margin: 0; padding: 0; }
+      .topbar { position: fixed; z-index: 20; top: 0; left: 0; right: 0; height: 56px; background: #0f172a; color: #fff; display:flex; align-items:center; padding: 0 16px; font: 600 14px system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial; }
+      .topbar a { color: #fff; text-decoration: none; margin-right: 16px; opacity: .9; }
+      .topbar a:hover { opacity: 1; }
+      .pad { height: 56px; }
+      redoc { height: calc(100vh - 56px); display: block; }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:24px;height:24px;background:#2563eb;border-radius:6px;display:grid;place-items:center;font:700 12px system-ui;">F</div>
+        <span>FinDash API</span>
+      </div>
+      <div style="flex:1"></div>
+      <a href="/api-docs">Swagger UI</a>
+      <a href="/openapi.json">OpenAPI JSON</a>
+      <a href="/docs" title="Docs Home">Docs</a>
+    </div>
+    <div class="pad"></div>
+    <redoc spec-url="/openapi.json"></redoc>
+    <script src="https://cdn.redoc.ly/redoc/latest/bundles/redoc.standalone.js"></script>
+  </body>
+</html>`);
+  });
 } catch (e) {
-  // swagger is optional; ignore if missing
+  // swagger/redoc optional
 }
 
 const DATA_DIR = path.join(__dirname, 'data');
