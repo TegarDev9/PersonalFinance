@@ -127,9 +127,10 @@ Export
 - GET /api/export/transactions.csv (same query filters as /transactions)
 - GET /api/export/transactions.qif
 - GET /api/export/transactions.ofx
-- GET /api/export/bulk.zip?mode=month|category&format=csv|qif|ofx&...filters
-  - File names now include account/month context, e.g. transactions-Cash-2025-01.csv
-  - Additional filters supported: minAmount, maxAmount, startDate/endDate (YYYY-MM-DD), type=income|expense|tran_codesfnewe</r
+- GET /api/export/bulk.zip?mode=month|day|category&format=csv|qif|ofx&...filters
+  - Group by Month (YYYY-MM), Day (YYYY-MM-DD), or Category
+  - File names include grouping context, e.g. 2025-01.csv or 2025-01-10.csv
+  - Additional filters supported: minAmount, maxAmount, startDate/endDate (YYYY-MM-DD), type=income|expense|transfer
 
 Sentiment
 - POST /api/sentiment/analyze
@@ -144,9 +145,11 @@ AI Chat
   - body: { provider, model?, messages: [{role, content}] }
 
 n8n
-- POST /webhooks/n8n (receive)  -> appends JSON lines to data/hooks.log (local FS only)
-- POST /n8n/forward { url?, data } -> forwards JSON to an n8n webhook (uses N8N_WEBHOOK_URL if url omitted)
-- Automatic overspending alert: when a new expense pushes a category above its monthly budget, the server sends a JSON payload to N8N_WEBHOOK_URL (if set)
+- POST /webhooks/n8n (receive) -> persists JSON-line logs:
+  - If KV (Vercel/Upstash) configured: RPUSH to KV list key (KV_HOOKS_KEY, default fin:hooks)
+  - If Deno KV available: set entries under ['fin','hooks' <ptimestamp_random>]
+  - Else: append to local file data/hooks.log
+- POST /n8n/forward { url?, data } -> forwards N8N_WEBHOOK_URL (if set)
 
 ## Persistence in serverless (Vercel KV / Upstash / Deno KV)
 

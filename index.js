@@ -21,6 +21,7 @@ const DB_FILE = path.join(DATA_DIR, 'db.json');
 const KV_URL = process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL || '';
 const KV_TOKEN = process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN || '';
 const KV_KEY = process.env.KV_DB_KEY || 'fin:db';
+const HOOKS_LIST_KEY = process.env.KV_HOOKS_KEY || 'fin:hooks';
 const kvEnabled = () => !!(KV_URL && KV_TOKEN);
 async function kvCmd(cmdArr) {
   const r = await fetch(KV_URL, {
@@ -39,6 +40,9 @@ async function kvGet(key) {
 }
 async function kvSet(key, val) {
   await kvCmd(['SET', key, val]);
+}
+async function kvListPush(key, val) {
+  await kvCmd(['RPUSH', key, val]);
 }
 
 // Deno KV (for Deno Deploy/local Deno)
@@ -114,6 +118,21 @@ async function readDB() {
     } catch {
       return normalizeDB(DEFAULT_DB);
     }
+  } else if (denoKvAvailable()) {
+    const kv = await getDenoKv();
+    const res = await kv.get(['fin', 'db']);
+    let raw = res && res.value;
+    if (!raw) {
+      await kv.set(['fin', 'db'], JSON.stringify(DEFAULT_DB));
+      const again = await kv.get(['fin', 'db']);
+      raw = again && again.value;
+    }
+    try {
+      const parsed = typeof raw === 'string' ? JSON.parse(raw) : (raw || {});
+      return normalizeDB(parsed);
+    } catch {
+      return normalizeDB(DEFAULT_DB);
+    }
   } else {
     await ensureDataFile();
     const raw = await fsp.readFile(DB_FILE, 'utf-8');
@@ -125,6 +144,9 @@ async function readDB() {
 async function writeDB(db) {
   if (kvEnabled()) {
     await kvSet(KV_KEY, JSON.stringify(db));
+  } else if (denoKvAvailable()) {
+    const kv = await getDenoKv();
+    await kv.set(['fin', 'db'], JSON.stringify(db));
   } else {
     await ensureDataFile();
     await fsp.writeFile(DB_FILE, JSON.stringify(db, null, 2));
@@ -841,11 +863,18 @@ app.post('/api/sentiment/analyze', async (req, res) => {
 // n8n
 app.post('/webhooks/n8n', async (req, res) => {
   try {
-    if (!kvEnabled()) {
+    const entry = { at: new Date().toISOString(), body: req.body };
+    const line = JSON.stringify(entry);
+    if (kvEnabled()) {
+      await kvListPush(HOOKS_LIST_KEY, line);
+    } else if (denoKvAvailable()) {
+      const kv = await getDenoKv();
+      const key = ['fin', 'hooks', `${Date.now()}_${Math.random().toString(36).slice(2,8)}`];
+      await kv.set(key, line);
+    } else {
       await ensureDataFile();
       const logPath = path.join(DATA_DIR, 'hooks.log');
-      const entry = { at: new Date().toISOString(), body: req.body };
-      await fsp.appendFile(logPath, JSON.stringify(entry) + '\n');
+      await fsp.appendFile(logPath, line + '\n');
     }
     res.json({ ok: true });
   } catch (e) {
@@ -872,12 +901,16 @@ app.post('/n8n/forward', async (req, res) => {
 
 // Export helpers and endpoints
 function filterTransactions(db, query) {
-  const { month, startMonth, endMonth, accountId, category, minAmount, maxAmount } = query;
+  const { month, startMonth, endMonth, startDate, endDate, accountId, category, type, minAmount, maxAmount } = query;
   let arr = db.transactions.slice().sort((a, b) => (a.date > b.date ? 1 : -1));
   if (accountId) arr = arr.filter(t => t.accountId === accountId);
   if (category) {
     const catLower = String(category).toLowerCase();
     arr = arr.filter(t => (t.category || '').toLowerCase() === catLower || t.categoryId === category);
+  }
+  if (type) {
+    const typ = String(type).toLowerCase();
+    arr = arr.filter(t => String(t.type).toLowerCase() === typ);
   }
   if (month) {
     arr = arr.filter(t => monthKey(t.date) === month);
@@ -888,6 +921,12 @@ function filterTransactions(db, query) {
       const m = monthKey(t.date);
       return m >= start && m <= end;
     });
+  }
+  if (startDate) {
+    arr = arr.filter(t => String(t.date).slice(0,10) >= String(startDate));
+  }
+  if (endDate) {
+    arr = arr.filter(t => String(t.date).slice(0,10) <= String(endDate));
   }
   const minA = minAmount !== undefined && minAmount !== '' ? Number(minAmount) : undefined;
   const maxA = maxAmount !== undefined && maxAmount !== '' ? Number(maxAmount) : undefined;
@@ -1078,6 +1117,21 @@ app.get('/api/export/bulk.zip', async (req, res) => {
       const fname = `${sanitize(cat)}.${format === 'csv' ? 'csv' : format}`;
       zip.file(fname, content);
     }
+  } else if (mode === 'day') {
+    const groups = {};
+    for (const t of txs) {
+      const d = String(t.date).slice(0, 10);
+      if (!groups[d]) groups[d] = [];
+      groups[d].push(t);
+    }
+    for (const [d, arr] of Object.entries(groups)) {
+      let content = '';
+      if (format === 'csv') content = toCSV(db, arr);
+      else if (format === 'qif') content = toQIF(db, arr);
+      else content = toOFX(db, arr);
+      const fname = `${sanitize(d)}.${format === 'csv' ? 'csv' : format}`;
+      zip.file(fname, content);
+    }
   } else {
     const groups = {};
     for (const t of txs) {
@@ -1112,5 +1166,8 @@ if (require.main === module) {
     console.log(`Server is running on port ${PORT}`);
   });
 }
+
+// Expose small utils for tests
+app._utils = { monthKey, filterTransactions };
 
 module.exports = app;

@@ -6,7 +6,7 @@
     "start": "node index.js",
     "dev": "node index.js",
     "validate": "node scripts/validate.js",
-    "test": "npm run validate"
+    "test": "node scripts/test_filters.js && node scripts/test_validation_smoke.js && npm run validate"
   },
   "keywords": [],
   "author": "",
