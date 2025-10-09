@@ -19,7 +19,7 @@ This is a single Node.js app serving an SPA UI with Tailwind, Chart.js and Tradi
 1) Install dependencies
 - npm install
 
-2) Set environment variables (create a .env file in project root)
+2) Set environment variables (create a .env file in project root for local; on Vercel use Project Settings → Environment Variables)
 - PORT=3000
 - OPENAI_API_KEY=...
 - OPENAI_MODEL=gpt-4o-mini
@@ -36,6 +36,7 @@ This is a single Node.js app serving an SPA UI with Tailwind, Chart.js and Tradi
 - TRADINGECONOMICS_SECRET=yourPass
 - ALPHA_VANTAGE_API_KEY=...
 - N8N_WEBHOOK_URL=https://your-n8n-host/webhook/your-id  # optional (for overspending alerts)
+- LOGS_AUTH_TOKEN=optional-protect-logs-endpoints        # optional
 
 Optional: persistence for serverless (Vercel KV / Upstash)
 - KV_REST_API_URL=...
@@ -45,9 +46,17 @@ Optional: persistence for serverless (Vercel KV / Upstash)
 
 Note: The request for “ChatGPT 5” is implemented via the OpenAI provider. Set OPENAI_MODEL to the latest model you prefer.
 
-3) Run
+3) Run locally
 - npm start
 - Open http://localhost:3000
+
+4) Deploy to Vercel (serverless)
+- Ensure vercel.json exists (included) with:
+  - functions.api/index.js.includeFiles: public/** and data/** (bundles static UI and initial DB)
+  - runtime: nodejs20.x
+  - rewrite all requests to /api/index.js (SPA + API)
+- In Vercel Project → Settings → Environment Variables, add the keys you need.
+- Click Deploy. If you don’t configure KV, the app will run with read-only defaults (no persistent writes).
 
 ## UI Sections
 

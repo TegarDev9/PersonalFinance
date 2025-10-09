@@ -129,11 +129,19 @@ const KEYWORD_MAP = {
 
 async function ensureDataFile() {
   if (kvEnabled() || denoKvAvailable()) return;
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
+  } catch {
+    // likely read-only FS (e.g., Vercel). proceed without persisting.
   }
-  if (!fs.existsSync(DB_FILE)) {
-    await fsp.writeFile(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2));
+  try {
+    if (!fs.existsSync(DB_FILE)) {
+      await fsp.writeFile(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2));
+    }
+  } catch {
+    // read-only FS; fall back to in-memory DEFAULT_DB
   }
 }
 
@@ -191,8 +199,12 @@ async function writeDB(db) {
     const kv = await getDenoKv();
     await kv.set(['fin', 'db'], JSON.stringify(db));
   } else {
-    await ensureDataFile();
-    await fsp.writeFile(DB_FILE, JSON.stringify(db, null, 2));
+    try {
+      await ensureDataFile();
+      await fsp.writeFile(DB_FILE, JSON.stringify(db, null, 2));
+    } catch {
+      // likely read-only FS (serverless). In this mode, data won't persist.
+    }
   }
 }
 
