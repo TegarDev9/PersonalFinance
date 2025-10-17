@@ -1,4 +1,3 @@
 const app = require('../index');
 
-// Export Express app directly for Vercel Node runtime
-module.exports = app;
+module.exports = (req, res) => app(req, res);
